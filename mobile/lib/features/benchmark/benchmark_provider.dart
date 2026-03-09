@@ -8,29 +8,31 @@ import '../../inference/forecast_cache_service.dart';
 
 class BenchmarkResult {
   final String variant;
-  final List<int> latenciesMs;
+  final List<int> latenciesUs; // microseconds — ms resolution is too coarse
   final int cacheHits;
   final int cacheMisses;
 
   const BenchmarkResult({
     required this.variant,
-    required this.latenciesMs,
+    required this.latenciesUs,
     required this.cacheHits,
     required this.cacheMisses,
   });
 
-  double get meanMs =>
-      latenciesMs.isEmpty ? 0 : latenciesMs.reduce((a, b) => a + b) / latenciesMs.length;
+  double get meanUs =>
+      latenciesUs.isEmpty ? 0 : latenciesUs.reduce((a, b) => a + b) / latenciesUs.length;
 
-  int get p95Ms {
-    if (latenciesMs.isEmpty) return 0;
-    final sorted = List<int>.from(latenciesMs)..sort();
+  double get meanMs => meanUs / 1000;
+
+  int get p95Us {
+    if (latenciesUs.isEmpty) return 0;
+    final sorted = List<int>.from(latenciesUs)..sort();
     return sorted[(sorted.length * 0.95).floor().clamp(0, sorted.length - 1)];
   }
 
-  int get p99Ms {
-    if (latenciesMs.isEmpty) return 0;
-    final sorted = List<int>.from(latenciesMs)..sort();
+  int get p99Us {
+    if (latenciesUs.isEmpty) return 0;
+    final sorted = List<int>.from(latenciesUs)..sort();
     return sorted[(sorted.length * 0.99).floor().clamp(0, sorted.length - 1)];
   }
 
@@ -116,14 +118,14 @@ class BenchmarkNotifier extends Notifier<BenchmarkState> {
       final sw = Stopwatch()..start();
       await engine.infer(
         gfsForecast: _syntheticGfs[i],
-        obsFeatures: _syntheticGfs[i], // same as GFS — tests latency not accuracy
+        obsFeatures: _syntheticGfs[i],
         spatialEmbed: spatial,
       );
-      latencies.add(sw.elapsedMilliseconds);
+      latencies.add(sw.elapsedMicroseconds);
 
       await DatabaseService.instance.logBenchmark(
         variant: 'A',
-        inferenceMs: latencies.last,
+        inferenceMs: sw.elapsedMicroseconds ~/ 1000,
         cacheHit: false,
       );
 
@@ -132,7 +134,7 @@ class BenchmarkNotifier extends Notifier<BenchmarkState> {
 
     return BenchmarkResult(
       variant: 'A',
-      latenciesMs: latencies,
+      latenciesUs: latencies,
       cacheHits: 0,
       cacheMisses: _cycles,
     );
@@ -159,7 +161,7 @@ class BenchmarkNotifier extends Notifier<BenchmarkState> {
         spatialEmbed: spatial,
         newObservation: _syntheticGfs[i].toSnapshot(),
       );
-      latencies.add(sw.elapsedMilliseconds);
+      latencies.add(sw.elapsedMicroseconds);
 
       final fromCache = result.source == InferenceSource.cache;
       if (fromCache) { cacheHits++; } else { cacheMisses++; }
@@ -169,7 +171,7 @@ class BenchmarkNotifier extends Notifier<BenchmarkState> {
 
     return BenchmarkResult(
       variant: 'B',
-      latenciesMs: latencies,
+      latenciesUs: latencies,
       cacheHits: cacheHits,
       cacheMisses: cacheMisses,
     );

@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'benchmark_provider.dart';
 
+String _fmtUs(int us) =>
+    us < 1000 ? '$us μs' : '${(us / 1000).toStringAsFixed(1)} ms';
+
 class BenchmarkScreen extends ConsumerWidget {
   const BenchmarkScreen({super.key});
 
@@ -185,9 +188,9 @@ class _ResultCard extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                _Stat(label: 'Mean', value: '${result.meanMs.toStringAsFixed(1)} ms'),
-                _Stat(label: 'P95', value: '${result.p95Ms} ms'),
-                _Stat(label: 'P99', value: '${result.p99Ms} ms'),
+                _Stat(label: 'Mean', value: _fmtUs(result.meanUs.round())),
+                _Stat(label: 'P95',  value: _fmtUs(result.p95Us)),
+                _Stat(label: 'P99',  value: _fmtUs(result.p99Us)),
                 if (result.variant == 'B')
                   _Stat(label: 'Cache rate', value: '${(result.cacheHitRate * 100).toStringAsFixed(0)}%'),
               ],
@@ -235,8 +238,8 @@ class _ComparisonCard extends StatelessWidget {
           children: [
             Text('Summary', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 12),
-            _Row('Variant A mean latency', '${a.meanMs.toStringAsFixed(1)} ms'),
-            _Row('Variant B mean latency', '${b.meanMs.toStringAsFixed(1)} ms'),
+            _Row('Variant A mean latency', _fmtUs(a.meanUs.round())),
+            _Row('Variant B mean latency', _fmtUs(b.meanUs.round())),
             _Row('Cache hit rate (B)', '${(b.cacheHitRate * 100).toStringAsFixed(0)}%'),
             _Row('Latency speedup (B vs A)', '${speedup.toStringAsFixed(2)}×'),
             _Row('Compute savings (B vs A)', '${savings.toStringAsFixed(1)}%'),
