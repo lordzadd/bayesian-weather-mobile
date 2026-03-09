@@ -2,10 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models/forecast_result.dart';
 import '../../core/services/noaa_service.dart';
-import '../../inference/bma_engine.dart';
 import '../../inference/forecast_cache_service.dart';
-// ignore: unused_import — provides toSnapshot() extension on List<double>
-export '../../inference/forecast_cache_service.dart' show ObservationSnapshotX;
 
 // Current device location — replace with geolocator package in production
 const _defaultLat = 37.7749; // San Francisco

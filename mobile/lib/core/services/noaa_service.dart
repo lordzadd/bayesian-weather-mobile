@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:dio/dio.dart';
 import 'package:riverpod/riverpod.dart';
 
@@ -140,26 +142,6 @@ class NoaaService {
     return map[d.toUpperCase()] ?? 0.0;
   }
 
-  double _cosDeg(double deg) {
-    const pi = 3.14159265358979;
-    return _cos(deg * pi / 180);
-  }
-
-  double _sinDeg(double deg) {
-    const pi = 3.14159265358979;
-    return _sin(deg * pi / 180);
-  }
-
-  // Avoid dart:math import for tree-shaking; delegate to dart:core
-  double _cos(double r) => _taylorCos(r);
-  double _sin(double r) => _taylorSin(r);
-
-  double _taylorCos(double x) {
-    // Sufficient precision for wind component decomposition
-    return 1 - x * x / 2 + x * x * x * x / 24;
-  }
-
-  double _taylorSin(double x) {
-    return x - x * x * x / 6 + x * x * x * x * x / 120;
-  }
+  double _cosDeg(double deg) => math.cos(deg * math.pi / 180);
+  double _sinDeg(double deg) => math.sin(deg * math.pi / 180);
 }

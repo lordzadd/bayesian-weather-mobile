@@ -56,7 +56,7 @@ class _Legend extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: Colors.black.withOpacity(0.75),
+      color: Colors.black.withValues(alpha: 0.75),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(

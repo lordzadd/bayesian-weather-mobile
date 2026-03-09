@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/models/forecast_result.dart';
 import '../../core/services/database_service.dart';
 import '../../inference/bma_engine.dart';
 import '../../inference/forecast_cache_service.dart';

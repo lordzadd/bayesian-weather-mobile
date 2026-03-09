@@ -10,6 +10,9 @@ import 'package:latlong2/latlong.dart';
 ///
 /// Color encodes the posterior mean temperature; opacity encodes 1/σ
 /// (higher certainty → more opaque).
+///
+/// In flutter_map 6.x, custom layers are plain widgets added to the
+/// [FlutterMap.children] list — no special layer base class needed.
 class HeatmapLayer extends StatelessWidget {
   final double centerLat;
   final double centerLon;
@@ -30,34 +33,42 @@ class HeatmapLayer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MobileLayerTransformer(
-      child: CustomPaint(
-        painter: _HeatmapPainter(
-          centerLat: centerLat,
-          centerLon: centerLon,
-          posteriorMean: posteriorMean,
-          posteriorStd: posteriorStd,
-          radiusDeg: radiusDeg,
-        ),
-        child: const SizedBox.expand(),
+    // In flutter_map 6.x, use MapCamera to translate geo coords to screen coords.
+    final camera = MapCamera.of(context);
+    final center = camera.latLngToScreenPoint(LatLng(centerLat, centerLon));
+    // Scale radius: 0.15° ≈ ~16 km; convert to pixels at current zoom
+    final radiusPx = _degToPixels(radiusDeg, camera.zoom);
+
+    return CustomPaint(
+      painter: _HeatmapPainter(
+        center: Offset(center.x, center.y),
+        radiusPx: radiusPx,
+        posteriorMean: posteriorMean,
+        posteriorStd: posteriorStd,
       ),
+      child: const SizedBox.expand(),
     );
+  }
+
+  /// Converts a degree delta to approximate pixels at the given zoom level.
+  double _degToPixels(double deg, double zoom) {
+    // At zoom 0, 360° = 256px. Each zoom level doubles.
+    final tilesAtZoom = math.pow(2, zoom).toDouble();
+    return deg / 360.0 * 256.0 * tilesAtZoom;
   }
 }
 
 class _HeatmapPainter extends CustomPainter {
-  final double centerLat;
-  final double centerLon;
+  final Offset center;
+  final double radiusPx;
   final double posteriorMean;
   final double posteriorStd;
-  final double radiusDeg;
 
   _HeatmapPainter({
-    required this.centerLat,
-    required this.centerLon,
+    required this.center,
+    required this.radiusPx,
     required this.posteriorMean,
     required this.posteriorStd,
-    required this.radiusDeg,
   });
 
   @override
@@ -71,22 +82,18 @@ class _HeatmapPainter extends CustomPainter {
 
     final paint = Paint()
       ..shader = ui.Gradient.radial(
-        Offset(size.width / 2, size.height / 2),
-        size.width * 0.3,
+        center,
+        radiusPx,
         [
-          color.withOpacity(opacity),
-          color.withOpacity(opacity * 0.4),
+          color.withValues(alpha: opacity),
+          color.withValues(alpha: opacity * 0.4),
           Colors.transparent,
         ],
         [0.0, 0.5, 1.0],
       )
       ..blendMode = BlendMode.srcOver;
 
-    canvas.drawCircle(
-      Offset(size.width / 2, size.height / 2),
-      size.width * 0.3,
-      paint,
-    );
+    canvas.drawCircle(center, radiusPx, paint);
   }
 
   Color _tempToColor(double t) {
@@ -100,5 +107,8 @@ class _HeatmapPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_HeatmapPainter old) =>
-      old.posteriorMean != posteriorMean || old.posteriorStd != posteriorStd;
+      old.posteriorMean != posteriorMean ||
+      old.posteriorStd != posteriorStd ||
+      old.center != center ||
+      old.radiusPx != radiusPx;
 }

@@ -29,6 +29,7 @@ dependencies:
 
   # Native inference (ExecuTorch via FFI)
   ffi: ^2.1.0
+  package_info_plus: ^8.0.0
 
   # Utilities
   intl: ^0.19.0

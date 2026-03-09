@@ -34,14 +34,14 @@ class ForecastCacheService {
   ///   1. Fetch cached posterior for (lat, lon, now).
   ///   2. If no cache → run inference, store result.
   ///   3. If cache exists → compare [newObservation] to cached values.
-  ///      - Delta below both thresholds → return cache.
+  ///      - Delta below both thresholds → return cached result (source=cache).
   ///      - Delta exceeds any threshold → run inference, update cache.
   Future<ForecastResult> getForecast({
     required double lat,
     required double lon,
     required List<double> gfsForecast,
     required List<double> spatialEmbed,
-    required _ObservationSnapshot newObservation,
+    required ObservationSnapshot newObservation,
   }) async {
     final now = DateTime.now();
     final cached = await _db.getCachedPosterior(lat: lat, lon: lon, time: now);
@@ -55,7 +55,8 @@ class ForecastCacheService {
         inferenceMs: stopwatch.elapsedMilliseconds,
         cacheHit: true,
       );
-      return cached;
+      // Override source to reflect this came from cache, not fresh GPU inference
+      return cached.copyWith(source: InferenceSource.cache);
     }
 
     // Run GPU inference
@@ -77,26 +78,27 @@ class ForecastCacheService {
     return result;
   }
 
-  bool _belowThreshold(ForecastResult cached, _ObservationSnapshot obs) {
+  bool _belowThreshold(ForecastResult cached, ObservationSnapshot obs) {
     final tempDelta = (cached.temperatureC - obs.temperatureC).abs();
     final windDelta = (cached.windSpeedMs - obs.windSpeedMs).abs();
     return tempDelta < temperatureThresholdC && windDelta < windSpeedThresholdMs;
   }
 }
 
-class _ObservationSnapshot {
+/// Lightweight snapshot of observable weather values used for threshold comparison.
+class ObservationSnapshot {
   final double temperatureC;
   final double windSpeedMs;
 
-  const _ObservationSnapshot({
+  const ObservationSnapshot({
     required this.temperatureC,
     required this.windSpeedMs,
   });
 }
 
-/// Factory for creating [_ObservationSnapshot] from a feature vector.
+/// Convenience extension to build an [ObservationSnapshot] from a feature vector.
 extension ObservationSnapshotX on List<double> {
-  _ObservationSnapshot toSnapshot() => _ObservationSnapshot(
+  ObservationSnapshot toSnapshot() => ObservationSnapshot(
         temperatureC: this[0],
         windSpeedMs: math.sqrt(this[2] * this[2] + this[3] * this[3]),
       );
