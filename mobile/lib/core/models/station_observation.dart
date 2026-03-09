@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:json_annotation/json_annotation.dart';
 
 part 'station_observation.g.dart';
@@ -27,17 +28,13 @@ class StationObservation {
 
   Map<String, dynamic> toJson() => _$StationObservationToJson(this);
 
+  /// Returns [temp, pressure, u_wind, v_wind, precip, rh] feature vector.
   List<double> toFeatureVector() => [
         temperatureC,
         surfacePressureHpa,
-        windSpeedMs * _cosDeg(windDirectionDeg),
-        windSpeedMs * _sinDeg(windDirectionDeg),
-        0.0, // precipitation placeholder
+        windSpeedMs * math.cos(windDirectionDeg * math.pi / 180),
+        windSpeedMs * math.sin(windDirectionDeg * math.pi / 180),
+        0.0, // precipitation not in METAR; filled by GFS value downstream
         relativeHumidityPct,
       ];
-
-  static double _cosDeg(double deg) =>
-      0; // dart:math import handled in implementation
-
-  static double _sinDeg(double deg) => 0;
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/services/database_service.dart';
+import 'features/benchmark/benchmark_screen.dart';
 import 'features/forecast/forecast_screen.dart';
 import 'features/map/map_screen.dart';
 import 'features/settings/settings_screen.dart';
@@ -44,6 +45,7 @@ class _MainShellState extends State<MainShell> {
   static const List<Widget> _pages = [
     ForecastScreen(),
     MapScreen(),
+    BenchmarkScreen(),
     SettingsScreen(),
   ];
 
@@ -57,6 +59,7 @@ class _MainShellState extends State<MainShell> {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.cloud), label: 'Forecast'),
           NavigationDestination(icon: Icon(Icons.map), label: 'Map'),
+          NavigationDestination(icon: Icon(Icons.analytics_outlined), label: 'Benchmark'),
           NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
         ],
       ),
