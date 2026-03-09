@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+*.pte
+*.pt
+*.pkl
+data/raw/
+data/processed/
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+pubspec.lock
+build/
+.idea/
+*.iml
+*.ipr
+*.iws
+.gradle/
+local.properties
+GeneratedPluginRegistrant.*
+*.class
+*.jar
+*.aab
+*.apk
+*.keystore
+*.jks
+google-services.json
+GoogleService-Info.plist
+
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
