@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../benchmark/benchmark_screen.dart';
+import '../forecast/forecast_provider.dart';
 import 'settings_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -21,18 +23,24 @@ class SettingsScreen extends ConsumerWidget {
             child: Column(
               children: [
                 RadioListTile<InferenceVariant>(
-                  title: const Text('Variant A — GPU (always fresh)'),
+                  title: const Text('Variant A — NN·Dart (always fresh)'),
                   subtitle: const Text('Full inference on every observation update'),
                   value: InferenceVariant.gpuAlways,
                   groupValue: settings.variant,
-                  onChanged: (v) => notifier.setVariant(v!),
+                  onChanged: (v) {
+                    notifier.setVariant(v!);
+                    ref.read(forecastProvider.notifier).refresh();
+                  },
                 ),
                 RadioListTile<InferenceVariant>(
                   title: const Text('Variant B — Cache-optimized'),
-                  subtitle: const Text('GPU gated by significance threshold'),
+                  subtitle: const Text('Inference gated by significance threshold'),
                   value: InferenceVariant.cacheOptimized,
                   groupValue: settings.variant,
-                  onChanged: (v) => notifier.setVariant(v!),
+                  onChanged: (v) {
+                    notifier.setVariant(v!);
+                    ref.read(forecastProvider.notifier).refresh();
+                  },
                 ),
               ],
             ),
@@ -83,11 +91,12 @@ class SettingsScreen extends ConsumerWidget {
           Card(
             child: ListTile(
               leading: const Icon(Icons.analytics_outlined),
-              title: const Text('View benchmark log'),
+              title: const Text('Open benchmark harness'),
               trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                // Navigate to benchmark screen
-              },
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const BenchmarkScreen()),
+              ),
             ),
           ),
         ],

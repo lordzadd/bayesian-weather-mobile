@@ -3,8 +3,16 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../core/services/location_service.dart';
 import '../forecast/forecast_provider.dart';
 import 'heatmap_painter.dart';
+
+/// Resolved GPS position for the map — AsyncNotifierProvider so it can
+/// be awaited independently of the forecast result.
+final _mapLocationProvider =
+    FutureProvider<({double lat, double lon})>((ref) async {
+  return ref.read(locationServiceProvider).currentPosition();
+});
 
 class MapScreen extends ConsumerWidget {
   const MapScreen({super.key});
@@ -12,14 +20,18 @@ class MapScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final forecast = ref.watch(forecastProvider);
+    final location = ref.watch(_mapLocationProvider);
+
+    final centerLat = location.valueOrNull?.lat ?? 37.7749;
+    final centerLon = location.valueOrNull?.lon ?? -122.4194;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Probabilistic Heatmap')),
       body: Stack(
         children: [
           FlutterMap(
-            options: const MapOptions(
-              initialCenter: LatLng(37.7749, -122.4194),
+            options: MapOptions(
+              initialCenter: LatLng(centerLat, centerLon),
               initialZoom: 9,
               minZoom: 5,
               maxZoom: 15,
@@ -31,8 +43,8 @@ class MapScreen extends ConsumerWidget {
               ),
               forecast.when(
                 data: (result) => HeatmapLayer(
-                  centerLat: 37.7749,
-                  centerLon: -122.4194,
+                  centerLat: centerLat,
+                  centerLon: centerLon,
                   posteriorMean: result.temperatureC,
                   posteriorStd: result.temperatureStd,
                 ),
