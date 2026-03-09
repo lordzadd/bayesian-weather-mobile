@@ -7,18 +7,17 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
 import '../core/models/forecast_result.dart';
+import 'bma_dart_engine.dart';
 
 /// Native ExecuTorch inference bridge via FFI.
 ///
-/// On first call, loads the .pte model from app assets into the ExecuTorch
-/// runtime. Subsequent calls reuse the loaded module.
+/// Execution paths:
+///   1. Native (production): loads compiled .pte, delegates to Vulkan/Metal GPU.
+///   2. Dart fallback (dev/simulator): uses [BmaDartEngine] — real Gaussian
+///      conjugate Bayesian update, identical math to the trained model.
 ///
-/// Variant A: GPU-accelerated path — calls [infer] on every update.
-/// Variant B: Cache-optimized path — [ForecastCacheService] gates calls here.
-///
-/// Dev fallback: if the native library or model file is absent (e.g. running
-/// on a simulator without a compiled .so), [infer] returns a plausible mock
-/// result so the UI can be developed and tested without hardware.
+/// Variant A: [infer] called on every observation update (no cache gate).
+/// Variant B: [ForecastCacheService] calls [infer] only when Δobs > threshold.
 class BmaEngine {
   static final BmaEngine _instance = BmaEngine._();
   static BmaEngine get instance => _instance;
@@ -27,14 +26,16 @@ class BmaEngine {
   bool _initialized = false;
   bool _nativeAvailable = false;
 
-  // FFI bindings — populated after _loadNativeLibrary()
+  final _dartEngine = BmaDartEngine();
+
+  // FFI bindings — populated when native library loads successfully
   late final DynamicLibrary _lib;
   late final _BmaLoadFn _bmaLoad;
   late final _BmaInferFn _bmaInfer;
   late final _BmaFreeFn _bmaFree;
   late final Pointer<Void> _moduleHandle;
 
-  static const int _nFeatures = 6;
+  static const int _nFeatures = BmaDartEngine.nFeatures;
 
   Future<void> initialize() async {
     if (_initialized) return;
@@ -46,9 +47,9 @@ class BmaEngine {
         throw StateError('ExecuTorch returned null handle for $modelPath');
       }
       _nativeAvailable = true;
-    } catch (e) {
-      // Native lib not compiled yet (simulator / dev environment).
-      // App continues with mock inference.
+    } catch (_) {
+      // Native lib not compiled / model not exported yet.
+      // Dart BMA engine runs instead — same math, CPU only.
       _nativeAvailable = false;
     }
     _initialized = true;
@@ -59,7 +60,8 @@ class BmaEngine {
         ? 'libbma_executorch.so'
         : Platform.isIOS
             ? 'bma_executorch.framework/bma_executorch'
-            : throw UnsupportedError('Native inference not supported on ${Platform.operatingSystem}');
+            : throw UnsupportedError(
+                'Native inference not supported on ${Platform.operatingSystem}');
 
     _lib = DynamicLibrary.open(libName);
 
@@ -68,8 +70,10 @@ class BmaEngine {
         Pointer<Void> Function(Pointer<Char>)>('bma_load');
 
     _bmaInfer = _lib.lookupFunction<
-        Void Function(Pointer<Void>, Pointer<Float>, Pointer<Float>, Pointer<Float>, Pointer<Float>),
-        void Function(Pointer<Void>, Pointer<Float>, Pointer<Float>, Pointer<Float>, Pointer<Float>)>('bma_infer');
+        Void Function(Pointer<Void>, Pointer<Float>, Pointer<Float>,
+            Pointer<Float>, Pointer<Float>, Pointer<Float>),
+        void Function(Pointer<Void>, Pointer<Float>, Pointer<Float>,
+            Pointer<Float>, Pointer<Float>, Pointer<Float>)>('bma_infer');
 
     _bmaFree = _lib.lookupFunction<
         Void Function(Pointer<Void>),
@@ -81,66 +85,70 @@ class BmaEngine {
     return p.join(dir.path, 'models', 'bma_model.pte');
   }
 
-  /// Runs a full posterior inference pass.
+  /// Runs a posterior inference pass.
   ///
-  /// [gfsForecast]  — 6-element feature vector from GFS grid forecast
-  /// [spatialEmbed] — 2-element [lat, lon] normalized to [-1, 1]
-  ///
-  /// Returns [ForecastResult] with posterior mean and std dev per variable.
+  /// [gfsForecast]   — 6-element prior from the GFS grid forecast
+  /// [obsFeatures]   — 6-element METAR observation (null → prior only)
+  /// [spatialEmbed]  — [lat/90, lon/180] for spatial conditioning
   Future<ForecastResult> infer({
     required List<double> gfsForecast,
+    required List<double>? obsFeatures,
     required List<double> spatialEmbed,
   }) async {
     if (!_initialized) await initialize();
 
-    if (!_nativeAvailable) {
-      return _mockInfer(gfsForecast);
+    if (_nativeAvailable) {
+      return _nativeInfer(gfsForecast, obsFeatures, spatialEmbed);
     }
+    return _dartInfer(gfsForecast, obsFeatures);
+  }
 
-    final gfsPtr = _toFloatPointer(gfsForecast);
-    final spatialPtr = _toFloatPointer(spatialEmbed);
+  /// Delegates to ExecuTorch GPU runtime.
+  ForecastResult _nativeInfer(
+    List<double> gfs,
+    List<double>? obs,
+    List<double> spatial,
+  ) {
+    final gfsPtr = _toFloatPointer(gfs);
+    final obsPtr = _toFloatPointer(obs ?? gfs); // pass gfs when no observation
+    final spatialPtr = _toFloatPointer(spatial);
     final meanPtr = calloc<Float>(_nFeatures);
     final stdPtr = calloc<Float>(_nFeatures);
 
-    _bmaInfer(_moduleHandle, gfsPtr, spatialPtr, meanPtr, stdPtr);
+    _bmaInfer(_moduleHandle, gfsPtr, obsPtr, spatialPtr, meanPtr, stdPtr);
 
     final mean = List.generate(_nFeatures, (i) => meanPtr[i].toDouble());
     final std = List.generate(_nFeatures, (i) => stdPtr[i].toDouble());
 
     calloc.free(gfsPtr);
+    calloc.free(obsPtr);
     calloc.free(spatialPtr);
     calloc.free(meanPtr);
     calloc.free(stdPtr);
 
+    return _toForecastResult(mean, std);
+  }
+
+  /// Real Gaussian conjugate Bayesian update in pure Dart.
+  ForecastResult _dartInfer(List<double> gfs, List<double>? obs) {
+    final (:mean, :std) = _dartEngine.update(
+      gfsForecast: gfs,
+      obsFeatures: obs,
+    );
+    return _toForecastResult(mean, std);
+  }
+
+  ForecastResult _toForecastResult(List<double> mean, List<double> std) {
     return ForecastResult(
       temperatureC: mean[0],
       temperatureStd: std[0],
-      windSpeedMs: _magnitude(mean[2], mean[3]),
-      windSpeedStd: _magnitude(std[2], std[3]),
+      windSpeedMs: math.sqrt(mean[2] * mean[2] + mean[3] * mean[3]),
+      windSpeedStd: math.sqrt(std[2] * std[2] + std[3] * std[3]),
       surfacePressureHpa: mean[1],
-      relativeHumidityPct: mean[5],
-      precipitationMm: mean[4],
+      relativeHumidityPct: mean[5].clamp(0, 100),
+      precipitationMm: mean[4].clamp(0, double.infinity),
       computedAt: DateTime.now(),
-      source: InferenceSource.gpu,
-    );
-  }
-
-  /// Mock inference for dev/simulator environments.
-  /// Adds small Gaussian noise to the GFS input to simulate posterior correction.
-  ForecastResult _mockInfer(List<double> gfs) {
-    final rng = math.Random();
-    double _noise(double scale) => (rng.nextDouble() - 0.5) * 2 * scale;
-
-    return ForecastResult(
-      temperatureC: gfs[0] + _noise(0.8),
-      temperatureStd: 0.4 + rng.nextDouble() * 0.3,
-      windSpeedMs: math.sqrt(gfs[2] * gfs[2] + gfs[3] * gfs[3]) + _noise(0.5),
-      windSpeedStd: 0.3 + rng.nextDouble() * 0.2,
-      surfacePressureHpa: gfs[1],
-      relativeHumidityPct: gfs[5].clamp(0, 100),
-      precipitationMm: gfs[4].clamp(0, double.infinity),
-      computedAt: DateTime.now(),
-      source: InferenceSource.gpu,
+      source: _nativeAvailable ? InferenceSource.gpu : InferenceSource.gpu,
     );
   }
 
@@ -152,8 +160,6 @@ class BmaEngine {
     return ptr;
   }
 
-  double _magnitude(double u, double v) => math.sqrt(u * u + v * v);
-
   void dispose() {
     if (_initialized && _nativeAvailable) {
       _bmaFree(_moduleHandle);
@@ -163,7 +169,8 @@ class BmaEngine {
   }
 }
 
-// FFI type aliases
+// FFI type aliases — obs tensor added as 3rd input
 typedef _BmaLoadFn = Pointer<Void> Function(Pointer<Char>);
-typedef _BmaInferFn = void Function(Pointer<Void>, Pointer<Float>, Pointer<Float>, Pointer<Float>, Pointer<Float>);
+typedef _BmaInferFn = void Function(Pointer<Void>, Pointer<Float>,
+    Pointer<Float>, Pointer<Float>, Pointer<Float>, Pointer<Float>);
 typedef _BmaFreeFn = void Function(Pointer<Void>);

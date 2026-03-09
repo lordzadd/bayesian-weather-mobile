@@ -77,6 +77,7 @@ class _TestCacheService extends ForecastCacheService {
     required double lat,
     required double lon,
     required List<double> gfsForecast,
+    required List<double>? obsFeatures,
     required List<double> spatialEmbed,
     required ObservationSnapshot newObservation,
   }) async {
@@ -126,7 +127,7 @@ void main() {
       // Delta = 0.05°C < 0.2°C threshold
       final obs = [15.05, 1013.25, 2.0, 1.5, 0.0, 65.0].toSnapshot();
       final result = await service.getForecast(
-        lat: lat, lon: lon, gfsForecast: gfs, spatialEmbed: spatial, newObservation: obs,
+        lat: lat, lon: lon, gfsForecast: gfs, obsFeatures: gfs, spatialEmbed: spatial, newObservation: obs,
       );
 
       expect(result.source, InferenceSource.cache);
@@ -144,7 +145,7 @@ void main() {
       // Delta = 1.5°C > 0.2°C threshold
       final obs = [16.5, 1013.25, 2.0, 1.5, 0.0, 65.0].toSnapshot();
       final result = await service.getForecast(
-        lat: lat, lon: lon, gfsForecast: gfs, spatialEmbed: spatial, newObservation: obs,
+        lat: lat, lon: lon, gfsForecast: gfs, obsFeatures: gfs, spatialEmbed: spatial, newObservation: obs,
       );
 
       expect(result.source, InferenceSource.gpu);
@@ -161,7 +162,7 @@ void main() {
 
       final obs = gfs.toSnapshot();
       await service.getForecast(
-        lat: lat, lon: lon, gfsForecast: gfs, spatialEmbed: spatial, newObservation: obs,
+        lat: lat, lon: lon, gfsForecast: gfs, obsFeatures: gfs, spatialEmbed: spatial, newObservation: obs,
       );
 
       expect(engine.callCount, 1);

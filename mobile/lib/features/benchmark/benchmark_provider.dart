@@ -94,7 +94,7 @@ class BenchmarkNotifier extends Notifier<BenchmarkState> {
 
   Future<void> run() async {
     if (state.running) return;
-    state = BenchmarkState(running: true, total: _cycles * 2);
+    state = const BenchmarkState(running: true, total: _cycles * 2);
 
     try {
       final variantA = await _runVariantA();
@@ -114,7 +114,11 @@ class BenchmarkNotifier extends Notifier<BenchmarkState> {
 
     for (int i = 0; i < _cycles; i++) {
       final sw = Stopwatch()..start();
-      await engine.infer(gfsForecast: _syntheticGfs[i], spatialEmbed: spatial);
+      await engine.infer(
+        gfsForecast: _syntheticGfs[i],
+        obsFeatures: _syntheticGfs[i], // same as GFS — tests latency not accuracy
+        spatialEmbed: spatial,
+      );
       latencies.add(sw.elapsedMilliseconds);
 
       await DatabaseService.instance.logBenchmark(
@@ -151,13 +155,14 @@ class BenchmarkNotifier extends Notifier<BenchmarkState> {
         lat: 37.7749,
         lon: -122.4194,
         gfsForecast: _syntheticGfs[i],
+        obsFeatures: _syntheticGfs[i],
         spatialEmbed: spatial,
         newObservation: _syntheticGfs[i].toSnapshot(),
       );
       latencies.add(sw.elapsedMilliseconds);
 
       final fromCache = result.source == InferenceSource.cache;
-      if (fromCache) cacheHits++; else cacheMisses++;
+      if (fromCache) { cacheHits++; } else { cacheMisses++; }
 
       state = state.copyWith(progress: _cycles + i + 1);
     }
