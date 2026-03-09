@@ -34,5 +34,6 @@ Map<String, dynamic> _$ForecastResultToJson(ForecastResult instance) =>
 
 const _$InferenceSourceEnumMap = {
   InferenceSource.gpu: 'gpu',
+  InferenceSource.dart: 'dart',
   InferenceSource.cache: 'cache',
 };

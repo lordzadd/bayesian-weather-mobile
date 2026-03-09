@@ -212,12 +212,16 @@ class _SourceBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isGpu = source == InferenceSource.gpu;
+    final (label, color) = switch (source) {
+      InferenceSource.gpu   => ('GPU', Colors.deepPurple.shade800),
+      InferenceSource.dart  => ('NN·Dart', Colors.indigo.shade800),
+      InferenceSource.cache => ('Cache', Colors.teal.shade800),
+    };
     return Padding(
       padding: const EdgeInsets.only(right: 4, top: 12, bottom: 12),
       child: Chip(
-        label: Text(isGpu ? 'GPU' : 'Cache', style: const TextStyle(fontSize: 11)),
-        backgroundColor: isGpu ? Colors.deepPurple.shade800 : Colors.teal.shade800,
+        label: Text(label, style: const TextStyle(fontSize: 11)),
+        backgroundColor: color,
         side: BorderSide.none,
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,

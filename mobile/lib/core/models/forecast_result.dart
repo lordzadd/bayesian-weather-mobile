@@ -2,7 +2,10 @@ import 'package:json_annotation/json_annotation.dart';
 
 part 'forecast_result.g.dart';
 
-enum InferenceSource { gpu, cache }
+/// gpu   — native ExecuTorch path (Vulkan/Metal hardware)
+/// dart  — trained weights running in pure Dart (CPU)
+/// cache — significance threshold hit; previous result reused
+enum InferenceSource { gpu, dart, cache }
 
 @JsonSerializable()
 class ForecastResult {

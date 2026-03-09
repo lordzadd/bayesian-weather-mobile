@@ -152,7 +152,7 @@ class BmaEngine {
       relativeHumidityPct: mean[5].clamp(0, 100),
       precipitationMm: mean[4].clamp(0, double.infinity),
       computedAt: DateTime.now(),
-      source: _nativeAvailable ? InferenceSource.gpu : InferenceSource.gpu,
+      source: _nativeAvailable ? InferenceSource.gpu : InferenceSource.dart,
     );
   }
 
