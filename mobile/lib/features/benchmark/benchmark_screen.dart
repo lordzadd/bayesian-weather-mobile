@@ -15,17 +15,18 @@ class BenchmarkScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Benchmark Harness'),
         actions: [
-          if (!state.running && (state.variantA != null || state.variantB != null))
-            IconButton(
-              icon: const Icon(Icons.download),
-              tooltip: 'Export CSV',
-              onPressed: () async {
-                final csv = await notifier.exportCsv();
-                if (context.mounted) {
-                  _showCsvDialog(context, csv);
-                }
-              },
-            ),
+          IconButton(
+            icon: const Icon(Icons.receipt_long),
+            tooltip: 'View benchmark log',
+            onPressed: state.running
+                ? null
+                : () async {
+                    final csv = await notifier.exportCsv();
+                    if (context.mounted) {
+                      _showCsvDialog(context, csv);
+                    }
+                  },
+          ),
         ],
       ),
       body: ListView(
@@ -64,13 +65,26 @@ class BenchmarkScreen extends ConsumerWidget {
   }
 
   void _showCsvDialog(BuildContext context, String csv) {
+    final lines = csv.trim().split('\n');
+    final isEmpty = lines.length <= 1; // only header row
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Benchmark CSV'),
-        content: SingleChildScrollView(
-          child: SelectableText(csv, style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
-        ),
+        title: const Text('Benchmark Log'),
+        content: isEmpty
+            ? const Text(
+                'No runs recorded yet.\nTap "Run Benchmark" to collect latency data.',
+                style: TextStyle(color: Colors.grey),
+              )
+            : SizedBox(
+                width: double.maxFinite,
+                child: SingleChildScrollView(
+                  child: SelectableText(
+                    csv,
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                  ),
+                ),
+              ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
         ],

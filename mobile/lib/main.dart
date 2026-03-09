@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/services/database_service.dart';
+import 'inference/bma_engine.dart';
 import 'features/benchmark/benchmark_screen.dart';
 import 'features/forecast/forecast_screen.dart';
 import 'features/map/map_screen.dart';
@@ -10,6 +11,7 @@ import 'features/settings/settings_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await DatabaseService.instance.initialize();
+  await BmaEngine.instance.initialize(); // loads bma_weights.json before first screen
   runApp(const ProviderScope(child: WeatherApp()));
 }
 
