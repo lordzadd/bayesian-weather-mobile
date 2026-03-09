@@ -39,6 +39,8 @@ class BmaEngine {
 
   Future<void> initialize() async {
     if (_initialized) return;
+    // Load trained neural network weights into the Dart engine first
+    await _dartEngine.load();
     try {
       _loadNativeLibrary();
       final modelPath = await _resolveModelPath();
@@ -49,7 +51,7 @@ class BmaEngine {
       _nativeAvailable = true;
     } catch (_) {
       // Native lib not compiled / model not exported yet.
-      // Dart BMA engine runs instead — same math, CPU only.
+      // Dart BMA engine runs instead — trained weights, CPU only.
       _nativeAvailable = false;
     }
     _initialized = true;
@@ -100,7 +102,7 @@ class BmaEngine {
     if (_nativeAvailable) {
       return _nativeInfer(gfsForecast, obsFeatures, spatialEmbed);
     }
-    return _dartInfer(gfsForecast, obsFeatures);
+    return _dartInfer(gfsForecast, obsFeatures, spatialEmbed);
   }
 
   /// Delegates to ExecuTorch GPU runtime.
@@ -129,11 +131,13 @@ class BmaEngine {
     return _toForecastResult(mean, std);
   }
 
-  /// Real Gaussian conjugate Bayesian update in pure Dart.
-  ForecastResult _dartInfer(List<double> gfs, List<double>? obs) {
+  /// Runs trained neural network weights in pure Dart.
+  ForecastResult _dartInfer(
+      List<double> gfs, List<double>? obs, List<double> spatial) {
     final (:mean, :std) = _dartEngine.update(
       gfsForecast: gfs,
       obsFeatures: obs,
+      spatialEmbed: spatial,
     );
     return _toForecastResult(mean, std);
   }

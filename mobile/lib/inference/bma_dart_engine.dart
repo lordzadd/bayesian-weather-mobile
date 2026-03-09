@@ -1,89 +1,214 @@
+import 'dart:convert';
 import 'dart:math' as math;
+import 'package:flutter/services.dart';
 
-/// Pure-Dart Gaussian conjugate Bayesian update.
+/// Runs the trained BMA neural network entirely in Dart.
 ///
-/// Implements the BMA core math that the trained ExecuTorch model will also
-/// perform — so the app produces real posterior estimates even before the
-/// compiled native library is available.
+/// The network was trained on paired (GFS seamless, ERA5) data for 10 CONUS
+/// airport stations over 2023-03-01 → 2025-03-01 (~126K samples, 150 epochs,
+/// MPS GPU, best val ELBO ≈ 8454).
 ///
-/// Model per variable i:
-///   Prior:       θ_i  ~ N(gfs_i,  σ_prior_i²)
-///   Likelihood:  obs_i ~ N(θ_i,  σ_obs_i²)
-///   Posterior:   θ_i | obs_i ~ N(μ_post_i, σ_post_i²)
+/// Architecture (matches ml/training/bma_model.py):
+///   bias_net:  Linear(8→64) → ReLU → Linear(64→64) → ReLU → Linear(64→6)
+///   noise_net: Linear(8→32) → ReLU → Linear(32→6)  → Softplus
 ///
-/// Closed-form update (conjugate Gaussian):
-///   σ_post_i² = 1 / (1/σ_prior_i² + 1/σ_obs_i²)
-///   μ_post_i  = σ_post_i² * (gfs_i/σ_prior_i² + obs_i/σ_obs_i²)
+/// Input: [gfs_features(6), lat_norm, lon_norm]  → 8 dims
+/// Output: (posterior_mean[6], posterior_std[6])
 ///
-/// When obs == gfs (fallback case), the posterior equals the prior.
-/// When they disagree, the posterior is pulled toward the more precise source.
+/// The trained bias corrects systematic GFS error patterns learned from 2 years
+/// of ERA5 reanalysis vs GFS seamless divergence across 10 CONUS airports.
 class BmaDartEngine {
-  /// GFS forecast error std dev per variable, estimated from ERA5 validation.
-  /// Order: [temp_C, pressure_hPa, u_wind_ms, v_wind_ms, precip_mm, rh_pct]
-  static const List<double> _priorStd = [
-    2.0,   // temperature  — typical GFS MAE ~1.5–2.5°C
-    2.0,   // pressure     — GFS SLP error ~2 hPa
-    3.0,   // u-wind       — wind component error ~2–4 m/s
-    3.0,   // v-wind
-    2.0,   // precipitation — high uncertainty
-    8.0,   // relative humidity — GFS RH error ~8–12%
-  ];
-
-  /// METAR/ASOS instrument accuracy per variable.
-  static const List<double> _obsStd = [
-    0.5,   // temperature  — WMO Class 1 sensor: ±0.3°C
-    0.5,   // pressure     — digital barometer: ±0.5 hPa
-    1.0,   // u-wind       — cup anemometer: ±1 m/s
-    1.0,   // v-wind
-    0.5,   // precipitation — tipping bucket: ±0.5 mm
-    3.0,   // humidity     — capacitive sensor: ±3%
-  ];
-
   static const int nFeatures = 6;
 
-  /// Computes the Gaussian conjugate posterior.
+  List<_Layer>? _biasNet;
+  List<_Layer>? _noiseNet;
+  Map<String, Map<String, double>>? _stats;
+  bool _loaded = false;
+
+  /// Load weights from assets. Call once before first inference.
+  Future<void> load() async {
+    if (_loaded) return;
+
+    final weightsJson =
+        await rootBundle.loadString('assets/models/bma_weights.json');
+    final statsJson =
+        await rootBundle.loadString('assets/models/bma_stats.json');
+
+    final w = jsonDecode(weightsJson) as Map<String, dynamic>;
+    final s = jsonDecode(statsJson) as Map<String, dynamic>;
+
+    _biasNet = _parseLayers(w['bias_net'] as List);
+    _noiseNet = _parseLayers(w['noise_net'] as List);
+    _stats = s.map((key, val) {
+      final m = val as Map<String, dynamic>;
+      return MapEntry(
+        key,
+        {'mean': (m['mean'] as num).toDouble(), 'std': (m['std'] as num).toDouble()},
+      );
+    });
+    _loaded = true;
+  }
+
+  List<_Layer> _parseLayers(List raw) {
+    return raw.map((l) {
+      final layer = l as Map<String, dynamic>;
+      final w = (layer['w'] as List)
+          .map((row) => (row as List).map((v) => (v as num).toDouble()).toList())
+          .toList();
+      final b = (layer['b'] as List).map((v) => (v as num).toDouble()).toList();
+      return _Layer(w, b);
+    }).toList();
+  }
+
+  // ── Normalize/denormalize using training stats ──────────────────────────────
+
+  static const List<String> _gfsCols = [
+    'gfs_temp_c', 'gfs_pres_hpa', 'gfs_u_ms', 'gfs_v_ms',
+    'gfs_precip_mm', 'gfs_rh_pct',
+  ];
+  static const List<String> _obsCols = [
+    'obs_temp_c', 'obs_pres_hpa', 'obs_u_ms', 'obs_v_ms',
+    'obs_precip_mm', 'obs_rh_pct',
+  ];
+
+  List<double> _normalize(List<double> raw, List<String> cols) {
+    final stats = _stats!;
+    return List.generate(cols.length, (i) {
+      final s = stats[cols[i]]!;
+      return (raw[i] - s['mean']!) / s['std']!;
+    });
+  }
+
+  List<double> _denormalize(List<double> normed, List<String> cols) {
+    final stats = _stats!;
+    return List.generate(cols.length, (i) {
+      final s = stats[cols[i]]!;
+      return normed[i] * s['std']! + s['mean']!;
+    });
+  }
+
+  // ── Neural network forward passes ───────────────────────────────────────────
+
+  /// [gfsForecast]  — raw (denormalized) GFS values [6]
+  /// [obsFeatures]  — raw METAR/ERA5 observation [6], nullable
+  /// [spatialEmbed] — [lat/90, lon/180]
   ///
-  /// [gfsForecast]   — prior mean, shape [6]
-  /// [obsFeatures]   — METAR observation, shape [6]; if null, returns prior
-  ///
-  /// Returns ({mean, std}) with shape [6] each.
+  /// Returns ({mean, std}) in original physical units.
   ({List<double> mean, List<double> std}) update({
     required List<double> gfsForecast,
     required List<double>? obsFeatures,
+    required List<double> spatialEmbed,
   }) {
-    final postMean = List<double>.filled(nFeatures, 0.0);
-    final postStd = List<double>.filled(nFeatures, 0.0);
+    if (!_loaded) {
+      // Fallback to conjugate prior if weights not yet loaded
+      return _conjugateFallback(gfsForecast, obsFeatures);
+    }
 
-    for (int i = 0; i < nFeatures; i++) {
-      final priorVar = _priorStd[i] * _priorStd[i];
-      final obsVar = _obsStd[i] * _obsStd[i];
+    final gfsNorm = _normalize(gfsForecast, _gfsCols);
+    final input = [...gfsNorm, ...spatialEmbed]; // [8]
 
-      final postVar = 1.0 / (1.0 / priorVar + 1.0 / obsVar);
-      postStd[i] = math.sqrt(postVar);
+    final biasNorm = _forward(_biasNet!, input, activation: _relu);
+    final noiseNorm = _forward(_noiseNet!, input, activation: _relu,
+        outputActivation: _softplus);
 
-      if (obsFeatures != null) {
-        postMean[i] =
-            postVar * (gfsForecast[i] / priorVar + obsFeatures[i] / obsVar);
-      } else {
-        // No observation: posterior collapses to prior
-        postMean[i] = gfsForecast[i];
+    // posterior_mean (normalized) = gfs_norm + bias
+    final meanNorm = List.generate(nFeatures, (i) => gfsNorm[i] + biasNorm[i]);
+
+    // If observation available, do a conjugate update in normalized space
+    final postMeanNorm = List<double>.filled(nFeatures, 0.0);
+    if (obsFeatures != null) {
+      final obsNorm = _normalize(obsFeatures, _obsCols);
+      for (int i = 0; i < nFeatures; i++) {
+        // noise_net output is prior uncertainty; treat obs std as half of that
+        final priorVar = noiseNorm[i] * noiseNorm[i];
+        final obsVar = priorVar * 0.25; // METAR ~2× more precise than GFS
+        final postVar = 1.0 / (1.0 / priorVar + 1.0 / obsVar);
+        postMeanNorm[i] =
+            postVar * (meanNorm[i] / priorVar + obsNorm[i] / obsVar);
+      }
+    } else {
+      for (int i = 0; i < nFeatures; i++) {
+        postMeanNorm[i] = meanNorm[i];
       }
     }
+
+    final postMean = _denormalize(postMeanNorm, _obsCols);
+    // std in physical units: noise_net output × feature std
+    final stats = _stats!;
+    final postStd = List.generate(nFeatures, (i) {
+      return noiseNorm[i] * stats[_obsCols[i]]!['std']!;
+    });
 
     return (mean: postMean, std: postStd);
   }
 
-  /// Posterior predictive: uncertainty increases when GFS and obs disagree.
-  ///
-  /// Returns an additional "disagreement" term added to the posterior std —
-  /// useful for visualizing heatmap opacity (high disagreement → more uncertain).
+  // ── Network primitives ──────────────────────────────────────────────────────
+
+  List<double> _forward(
+    List<_Layer> layers,
+    List<double> x, {
+    double Function(double) activation = _relu,
+    double Function(double)? outputActivation,
+  }) {
+    List<double> h = x;
+    for (int li = 0; li < layers.length; li++) {
+      final layer = layers[li];
+      final out = List<double>.filled(layer.bias.length, 0.0);
+      for (int j = 0; j < layer.bias.length; j++) {
+        double sum = layer.bias[j];
+        for (int k = 0; k < h.length; k++) {
+          sum += layer.weights[j][k] * h[k];
+        }
+        final isLast = (li == layers.length - 1);
+        out[j] = isLast
+            ? (outputActivation != null ? outputActivation(sum) : sum)
+            : activation(sum);
+      }
+      h = out;
+    }
+    return h;
+  }
+
+  static double _relu(double x) => x < 0 ? 0.0 : x;
+
+  static double _softplus(double x) {
+    // log(1 + exp(x)) — numerically stable
+    if (x > 20) return x;
+    return math.log(1.0 + math.exp(x));
+  }
+
+  // ── Conjugate fallback (used before weights load) ───────────────────────────
+
+  static const List<double> _priorStd = [2.0, 2.0, 3.0, 3.0, 2.0, 8.0];
+  static const List<double> _obsStd   = [0.5, 0.5, 1.0, 1.0, 0.5, 3.0];
+
+  ({List<double> mean, List<double> std}) _conjugateFallback(
+    List<double> gfsForecast,
+    List<double>? obsFeatures,
+  ) {
+    final postMean = List<double>.filled(nFeatures, 0.0);
+    final postStd = List<double>.filled(nFeatures, 0.0);
+    for (int i = 0; i < nFeatures; i++) {
+      final pv = _priorStd[i] * _priorStd[i];
+      final ov = _obsStd[i] * _obsStd[i];
+      final postVar = 1.0 / (1.0 / pv + 1.0 / ov);
+      postStd[i] = math.sqrt(postVar);
+      postMean[i] = obsFeatures != null
+          ? postVar * (gfsForecast[i] / pv + obsFeatures[i] / ov)
+          : gfsForecast[i];
+    }
+    return (mean: postMean, std: postStd);
+  }
+
   List<double> disagreement({
     required List<double> gfsForecast,
     required List<double> obsFeatures,
-  }) {
-    return List.generate(
-      nFeatures,
-      (i) => (gfsForecast[i] - obsFeatures[i]).abs(),
-    );
-  }
+  }) =>
+      List.generate(nFeatures, (i) => (gfsForecast[i] - obsFeatures[i]).abs());
+}
+
+class _Layer {
+  final List<List<double>> weights;
+  final List<double> bias;
+  const _Layer(this.weights, this.bias);
 }

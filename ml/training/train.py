@@ -1,8 +1,10 @@
 """
-Training loop for the BMA model using Stochastic Variational Inference.
+Trains the BMA bias-correction model on paired (GFS, METAR) data.
 
 Usage:
-    python training/train.py [--epochs 200] [--lr 1e-3] [--batch-size 256]
+    python -m training.train [--epochs 150] [--lr 1e-3] [--batch-size 512]
+
+Automatically uses MPS (Apple Silicon GPU) when available.
 """
 
 import argparse
@@ -14,80 +16,99 @@ import pyro
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 
-from bma_model import BMAModel, build_svi
+from training.bma_model import BMAModel, build_svi
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+log = logging.getLogger(__name__)
 
-PROCESSED_DIR = Path(__file__).parent.parent / "data" / "processed"
-CHECKPOINT_DIR = Path(__file__).parent.parent / "checkpoints"
-CHECKPOINT_DIR.mkdir(exist_ok=True)
+PROC_DIR  = Path(__file__).parent.parent / "data" / "processed"
+CKPT_DIR  = Path(__file__).parent.parent / "checkpoints"
+CKPT_DIR.mkdir(exist_ok=True)
 
 
-def load_dataset() -> TensorDataset:
-    tensors_path = PROCESSED_DIR / "era5_tensors.pt"
-    if not tensors_path.exists():
-        raise FileNotFoundError("Processed tensors not found. Run data/preprocess.py first.")
+def best_device() -> torch.device:
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
 
-    data = torch.load(tensors_path)
-    variables = ["2m_temperature", "surface_pressure",
-                 "10m_u_component_of_wind", "10m_v_component_of_wind",
-                 "total_precipitation", "relative_humidity"]
 
-    # Stack variables along feature dim; flatten spatial/time dims into batch
-    stacked = torch.stack([data[v] for v in variables], dim=-1)
-    original_shape = stacked.shape
-    flat = stacked.reshape(-1, len(variables))
-
-    # Dummy spatial embeddings (lat/lon normalized to [-1, 1])
-    # Replace with actual coordinate tensors from ERA5 grid in production
-    spatial = torch.zeros(flat.shape[0], 2)
-
-    logger.info(f"Dataset: {flat.shape[0]} samples, {len(variables)} features (from {original_shape})")
-    return TensorDataset(flat, spatial, flat)  # (gfs_proxy, spatial, target)
+def load_split(name: str) -> TensorDataset:
+    path = PROC_DIR / f"{name}.pt"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} not found. Run data/collect_training_data.py then data/build_dataset.py first."
+        )
+    d = torch.load(path, weights_only=True)
+    # d keys: gfs [N,6], spatial [N,2], obs [N,6]
+    return TensorDataset(d["gfs"], d["spatial"], d["obs"])
 
 
 def train(args: argparse.Namespace):
     pyro.clear_param_store()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info(f"Training on {device}")
+    device = best_device()
+    log.info(f"Device: {device}")
 
-    dataset = load_dataset()
-    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    train_ds = load_split("train")
+    val_ds   = load_split("val")
+    log.info(f"Train: {len(train_ds)}  Val: {len(val_ds)}")
 
-    model = BMAModel(n_features=6, hidden_dim=64).to(device)
-    svi = build_svi(model, lr=args.lr)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size,
+                              shuffle=True, num_workers=0, pin_memory=False)
+    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size,
+                              shuffle=False, num_workers=0)
 
-    best_loss = float("inf")
+    model = BMAModel(n_features=6, hidden_dim=args.hidden_dim).to(device)
+    svi   = build_svi(model, lr=args.lr)
+
+    best_val_loss = float("inf")
+
     for epoch in range(1, args.epochs + 1):
-        epoch_loss = 0.0
-        for gfs, spatial, obs in tqdm(loader, desc=f"Epoch {epoch}/{args.epochs}", leave=False):
-            gfs, spatial, obs = gfs.to(device), spatial.to(device), obs.to(device)
-            loss = svi.step(gfs, spatial, obs)
-            epoch_loss += loss
+        # --- train ---
+        model.train()
+        train_loss = 0.0
+        for gfs, spatial, obs in tqdm(train_loader, desc=f"Ep {epoch:3d}", leave=False):
+            gfs     = gfs.to(device)
+            spatial = spatial.to(device)
+            obs     = obs.to(device)
+            train_loss += svi.step(gfs, spatial, obs)
 
-        avg_loss = epoch_loss / len(loader)
-        logger.info(f"Epoch {epoch:4d} | ELBO loss: {avg_loss:.4f}")
+        # --- validate (ELBO on val set, no parameter update) ---
+        model.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for gfs, spatial, obs in val_loader:
+                gfs     = gfs.to(device)
+                spatial = spatial.to(device)
+                obs     = obs.to(device)
+                val_loss += svi.evaluate_loss(gfs, spatial, obs)
 
-        if avg_loss < best_loss:
-            best_loss = avg_loss
-            ckpt_path = CHECKPOINT_DIR / "bma_best.pt"
+        avg_train = train_loss / len(train_loader)
+        avg_val   = val_loss   / len(val_loader)
+
+        if epoch % 10 == 0 or epoch == 1:
+            log.info(f"Epoch {epoch:3d} | train ELBO: {avg_train:10.2f} | val ELBO: {avg_val:10.2f}")
+
+        if avg_val < best_val_loss:
+            best_val_loss = avg_val
             torch.save({
-                "epoch": epoch,
+                "epoch":       epoch,
                 "model_state": model.state_dict(),
                 "pyro_params": pyro.get_param_store().get_state(),
-                "loss": best_loss,
-            }, ckpt_path)
-            logger.info(f"  -> Saved best checkpoint to {ckpt_path}")
+                "val_loss":    best_val_loss,
+                "args":        vars(args),
+            }, CKPT_DIR / "bma_best.pt")
 
-    logger.info(f"Training complete. Best ELBO loss: {best_loss:.4f}")
+    log.info(f"Done. Best val ELBO: {best_val_loss:.2f}  →  checkpoints/bma_best.pt")
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Train BMA weather model")
-    p.add_argument("--epochs", type=int, default=200)
-    p.add_argument("--lr", type=float, default=1e-3)
-    p.add_argument("--batch-size", type=int, default=256)
+    p = argparse.ArgumentParser()
+    p.add_argument("--epochs",     type=int,   default=150)
+    p.add_argument("--lr",         type=float, default=1e-3)
+    p.add_argument("--batch-size", type=int,   default=512)
+    p.add_argument("--hidden-dim", type=int,   default=64)
     return p.parse_args()
 
 
