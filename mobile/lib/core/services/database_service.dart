@@ -13,7 +13,7 @@ class DatabaseService {
   static final DatabaseService instance = DatabaseService._();
 
   static const _dbName = 'bayesian_weather.db';
-  static const _dbVersion = 1;
+  static const _dbVersion = 2;
 
   Database? _db;
 
@@ -23,6 +23,7 @@ class DatabaseService {
       dbPath,
       version: _dbVersion,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
@@ -52,9 +53,54 @@ class DatabaseService {
         timestamp INTEGER NOT NULL
       )
     ''');
+
+    await _createPredictionHistoryTable(db);
   }
 
-  Database get _database {
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await _createPredictionHistoryTable(db);
+    }
+  }
+
+  static Future<void> _createPredictionHistoryTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE prediction_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        target_timestamp TEXT NOT NULL,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        station_id TEXT,
+        variant TEXT NOT NULL,
+        pred_temp_c REAL,
+        pred_temp_std REAL,
+        pred_wind_speed_ms REAL,
+        pred_wind_speed_std REAL,
+        pred_pressure_hpa REAL,
+        pred_humidity_pct REAL,
+        pred_precip_mm REAL,
+        obs_temp_c REAL,
+        obs_pressure_hpa REAL,
+        obs_wind_speed_ms REAL,
+        obs_precip_mm REAL,
+        obs_humidity_pct REAL,
+        validated_at TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE INDEX idx_history_time ON prediction_history(timestamp)
+    ''');
+
+    await db.execute('''
+      CREATE INDEX idx_history_unvalidated
+        ON prediction_history(validated_at)
+        WHERE validated_at IS NULL
+    ''');
+  }
+
+  Database get database {
     if (_db == null) throw StateError('DatabaseService not initialized');
     return _db!;
   }
@@ -67,7 +113,7 @@ class DatabaseService {
     required ForecastResult result,
   }) async {
     final bucket = _timeBucket(time);
-    await _database.insert(
+    await database.insert(
       'posterior_cache',
       {
         'lat': lat,
@@ -87,7 +133,7 @@ class DatabaseService {
     required DateTime time,
   }) async {
     final bucket = _timeBucket(time);
-    final rows = await _database.query(
+    final rows = await database.query(
       'posterior_cache',
       where: 'lat = ? AND lon = ? AND time_bucket = ?',
       whereArgs: [lat, lon, bucket],
@@ -105,7 +151,7 @@ class DatabaseService {
     required int inferenceMs,
     required bool cacheHit,
   }) async {
-    await _database.insert('benchmark_log', {
+    await database.insert('benchmark_log', {
       'variant': variant,
       'inference_ms': inferenceMs,
       'cache_hit': cacheHit ? 1 : 0,
@@ -114,12 +160,12 @@ class DatabaseService {
   }
 
   Future<List<Map<String, dynamic>>> getBenchmarkLog() async {
-    return _database.query('benchmark_log', orderBy: 'timestamp DESC');
+    return database.query('benchmark_log', orderBy: 'timestamp DESC');
   }
 
   Future<void> clearExpiredCache({Duration maxAge = const Duration(hours: 6)}) async {
     final cutoff = DateTime.now().subtract(maxAge).millisecondsSinceEpoch;
-    await _database.delete(
+    await database.delete(
       'posterior_cache',
       where: 'created_at < ?',
       whereArgs: [cutoff],
