@@ -86,6 +86,65 @@ class OpenMeteoService {
     }
   }
 
+  /// Fetches historical GFS data from [hoursAgo] and current observation.
+  ///
+  /// Used by the lookback validation service: GFS data at T-[hoursAgo] is the
+  /// prior, and `current` conditions are the ground truth to compare against.
+  Future<({List<double> gfs, List<double> obs, DateTime targetTime})?> fetchForLookback(
+      double lat, double lon, {int hoursAgo = 1}) async {
+    try {
+      final resp = await _dio.get(_url, queryParameters: {
+        'latitude': lat,
+        'longitude': lon,
+        'current': _vars,
+        'hourly': _vars,
+        'wind_speed_unit': 'ms',
+        'timezone': 'UTC',
+        'forecast_days': 1,
+        'past_hours': hoursAgo + 1,
+        'models': 'gfs_seamless',
+      });
+
+      final current = resp.data['current'] as Map<String, dynamic>;
+      final hourly = resp.data['hourly'] as Map<String, dynamic>;
+
+      // Current conditions = ground truth observation
+      final obs = _toFeatureVector(
+        tempC: (current['temperature_2m'] as num).toDouble(),
+        pressHpa: (current['surface_pressure'] as num).toDouble(),
+        windMs: (current['wind_speed_10m'] as num).toDouble(),
+        windDeg: (current['wind_direction_10m'] as num).toDouble(),
+        precipMm: (current['precipitation'] as num).toDouble(),
+        rhPct: (current['relative_humidity_2m'] as num).toDouble(),
+      );
+
+      // Find the hourly slot for T - hoursAgo
+      final currentTime = current['time'] as String;
+      final currentHour = currentTime.length >= 13
+          ? '${currentTime.substring(0, 13)}:00'
+          : currentTime;
+      final times = hourly['time'] as List;
+      int idx = times.indexOf(currentHour);
+      if (idx < 0) idx = hoursAgo;
+      final pastIdx = (idx - hoursAgo).clamp(0, times.length - 1);
+
+      final gfs = _toFeatureVector(
+        tempC: (hourly['temperature_2m'][pastIdx] as num).toDouble(),
+        pressHpa: (hourly['surface_pressure'][pastIdx] as num).toDouble(),
+        windMs: (hourly['wind_speed_10m'][pastIdx] as num).toDouble(),
+        windDeg: (hourly['wind_direction_10m'][pastIdx] as num).toDouble(),
+        precipMm: (hourly['precipitation'][pastIdx] as num).toDouble(),
+        rhPct: (hourly['relative_humidity_2m'][pastIdx] as num).toDouble(),
+      );
+
+      final targetTime = DateTime.parse(times[pastIdx] as String);
+
+      return (gfs: gfs, obs: obs, targetTime: targetTime);
+    } catch (_) {
+      return null;
+    }
+  }
+
   // Decomposes wind speed+direction into (u, v) components —
   // same transform as collect_training_data.py.
   List<double> _toFeatureVector({
