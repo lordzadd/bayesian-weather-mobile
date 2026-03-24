@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models/forecast_result.dart';
 import 'forecast_provider.dart';
+import 'widgets/accuracy_card.dart';
 
 class ForecastScreen extends ConsumerWidget {
   const ForecastScreen({super.key});
@@ -49,6 +50,8 @@ class _ForecastBody extends StatelessWidget {
         _DetailGrid(result: result),
         const SizedBox(height: 12),
         _UncertaintyCard(result: result),
+        const SizedBox(height: 12),
+        const AccuracyCard(),
         const SizedBox(height: 12),
         Text(
           'Updated ${_formatTime(result.computedAt)}',
