@@ -39,7 +39,8 @@ def export_weights(ckpt_path: Path, out_path: Path):
     log.info(f"Loading checkpoint: {ckpt_path}")
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
-    model = BMAModel(n_features=6, hidden_dim=64)
+    hidden_dim = ckpt.get("args", {}).get("hidden_dim", 64)
+    model = BMAModel(n_features=6, hidden_dim=hidden_dim, n_temporal=4)
     model.load_state_dict(ckpt["model_state"])
     model.eval()
 
@@ -63,7 +64,8 @@ def export_weights(ckpt_path: Path, out_path: Path):
         ],
         "meta": {
             "n_features": 6,
-            "hidden_dim": 64,
+            "hidden_dim": hidden_dim,
+            "n_temporal": 4,
             "epoch": ckpt["epoch"],
             "val_elbo": ckpt["val_loss"],
         },

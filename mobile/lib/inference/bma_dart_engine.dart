@@ -20,8 +20,8 @@ import 'package:flutter/services.dart';
 class BmaDartEngine {
   static const int nFeatures = 6;
 
-  List<_Layer>? _biasNet;
-  List<_Layer>? _noiseNet;
+  // Ensemble: list of (biasNet, noiseNet) weight sets
+  final List<({List<_Layer> biasNet, List<_Layer> noiseNet})> _ensembleModels = [];
   Map<String, Map<String, double>>? _stats;
   bool _loaded = false;
 
@@ -37,8 +37,23 @@ class BmaDartEngine {
     final w = jsonDecode(weightsJson) as Map<String, dynamic>;
     final s = jsonDecode(statsJson) as Map<String, dynamic>;
 
-    _biasNet = _parseLayers(w['bias_net'] as List);
-    _noiseNet = _parseLayers(w['noise_net'] as List);
+    // Load ensemble models if available, otherwise single model
+    if (w.containsKey('ensemble')) {
+      final ensemble = w['ensemble'] as List;
+      for (final m in ensemble) {
+        final model = m as Map<String, dynamic>;
+        _ensembleModels.add((
+          biasNet: _parseLayers(model['bias_net'] as List),
+          noiseNet: _parseLayers(model['noise_net'] as List),
+        ));
+      }
+    } else {
+      _ensembleModels.add((
+        biasNet: _parseLayers(w['bias_net'] as List),
+        noiseNet: _parseLayers(w['noise_net'] as List),
+      ));
+    }
+
     _stats = s.map((key, val) {
       final m = val as Map<String, dynamic>;
       return MapEntry(
@@ -87,6 +102,18 @@ class BmaDartEngine {
     });
   }
 
+  /// Cyclic encoding of hour-of-day and day-of-year — matches training pipeline.
+  static List<double> _temporalFeatures(DateTime t) {
+    final hour = t.hour + t.minute / 60.0;
+    final doy = t.difference(DateTime(t.year, 1, 1)).inDays + 1;
+    return [
+      math.sin(hour * 2 * math.pi / 24),
+      math.cos(hour * 2 * math.pi / 24),
+      math.sin(doy * 2 * math.pi / 365.25),
+      math.cos(doy * 2 * math.pi / 365.25),
+    ];
+  }
+
   // ── Neural network forward passes ───────────────────────────────────────────
 
   /// [gfsForecast]  — raw (denormalized) GFS values [6]
@@ -105,38 +132,53 @@ class BmaDartEngine {
     }
 
     final gfsNorm = _normalize(gfsForecast, _gfsCols);
-    final input = [...gfsNorm, ...spatialEmbed]; // [8]
+    final temporal = _temporalFeatures(DateTime.now());
+    final input = [...gfsNorm, ...spatialEmbed, ...temporal]; // [12]
+    final obsNorm = obsFeatures != null ? _normalize(obsFeatures, _obsCols) : null;
 
-    final biasNorm = _forward(_biasNet!, input, activation: _relu);
-    final noiseNorm = _forward(_noiseNet!, input, activation: _relu,
-        outputActivation: _softplus);
+    // Run each ensemble member and accumulate
+    final ensembleMeans = List.generate(nFeatures, (_) => 0.0);
+    final ensembleStds = List.generate(nFeatures, (_) => 0.0);
+    final nModels = _ensembleModels.length;
 
-    // posterior_mean (normalized) = gfs_norm + bias
-    final meanNorm = List.generate(nFeatures, (i) => gfsNorm[i] + biasNorm[i]);
+    for (final model in _ensembleModels) {
+      final biasNorm = _forward(model.biasNet, input, activation: _relu);
+      final noiseNorm = _forward(model.noiseNet, input, activation: _relu,
+          outputActivation: _softplus);
 
-    // If observation available, do a conjugate update in normalized space
-    final postMeanNorm = List<double>.filled(nFeatures, 0.0);
-    if (obsFeatures != null) {
-      final obsNorm = _normalize(obsFeatures, _obsCols);
-      for (int i = 0; i < nFeatures; i++) {
-        // noise_net output is prior uncertainty; treat obs std as half of that
-        final priorVar = noiseNorm[i] * noiseNorm[i];
-        final obsVar = priorVar * 0.25; // METAR ~2× more precise than GFS
-        final postVar = 1.0 / (1.0 / priorVar + 1.0 / obsVar);
-        postMeanNorm[i] =
-            postVar * (meanNorm[i] / priorVar + obsNorm[i] / obsVar);
+      // posterior_mean (normalized) = gfs_norm + bias
+      final meanNorm = List.generate(nFeatures, (i) => gfsNorm[i] + biasNorm[i]);
+
+      // If observation available, do a conjugate update in normalized space
+      final postMeanNorm = List<double>.filled(nFeatures, 0.0);
+      if (obsNorm != null) {
+        for (int i = 0; i < nFeatures; i++) {
+          final priorVar = noiseNorm[i] * noiseNorm[i];
+          final obsVar = priorVar * 0.25; // METAR ~2× more precise than GFS
+          final postVar = 1.0 / (1.0 / priorVar + 1.0 / obsVar);
+          postMeanNorm[i] =
+              postVar * (meanNorm[i] / priorVar + obsNorm[i] / obsVar);
+        }
+      } else {
+        for (int i = 0; i < nFeatures; i++) {
+          postMeanNorm[i] = meanNorm[i];
+        }
       }
-    } else {
+
       for (int i = 0; i < nFeatures; i++) {
-        postMeanNorm[i] = meanNorm[i];
+        ensembleMeans[i] += postMeanNorm[i];
+        ensembleStds[i] += noiseNorm[i];
       }
     }
 
-    final postMean = _denormalize(postMeanNorm, _obsCols);
-    // std in physical units: noise_net output × feature std
+    // Average across ensemble members
+    final avgMeanNorm = List.generate(nFeatures, (i) => ensembleMeans[i] / nModels);
+    final avgNoiseNorm = List.generate(nFeatures, (i) => ensembleStds[i] / nModels);
+
+    final postMean = _denormalize(avgMeanNorm, _obsCols);
     final stats = _stats!;
     final postStd = List.generate(nFeatures, (i) {
-      return noiseNorm[i] * stats[_obsCols[i]]!['std']!;
+      return avgNoiseNorm[i] * stats[_obsCols[i]]!['std']!;
     });
 
     return (mean: postMean, std: postStd);

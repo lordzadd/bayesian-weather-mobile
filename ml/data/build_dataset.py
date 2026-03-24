@@ -20,6 +20,7 @@ PROC_DIR.mkdir(parents=True, exist_ok=True)
 GFS_FEATURES = ["gfs_temp_c","gfs_pres_hpa","gfs_u_ms","gfs_v_ms","gfs_precip_mm","gfs_rh_pct"]
 OBS_FEATURES = ["obs_temp_c","obs_pres_hpa","obs_u_ms","obs_v_ms","obs_precip_mm","obs_rh_pct"]
 SPATIAL_FEATURES = ["lat_norm", "lon_norm"]
+TEMPORAL_FEATURES = ["sin_hour", "cos_hour", "sin_doy", "cos_doy"]
 
 
 def load_and_join() -> pd.DataFrame:
@@ -52,6 +53,16 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     df["lat_norm"] = df["lat"] / 90.0
     df["lon_norm"] = df["lon"] / 180.0
 
+    # Temporal features — compute from timestamp if not already present
+    if "sin_hour" not in df.columns:
+        import math
+        hours = df["time"].dt.hour + df["time"].dt.minute / 60.0
+        doy = df["time"].dt.dayofyear
+        df["sin_hour"] = (hours * 2 * np.pi / 24).apply(math.sin)
+        df["cos_hour"] = (hours * 2 * np.pi / 24).apply(math.cos)
+        df["sin_doy"]  = (doy * 2 * np.pi / 365.25).apply(math.sin)
+        df["cos_doy"]  = (doy * 2 * np.pi / 365.25).apply(math.cos)
+
     print(f"After cleaning: {len(df)} rows")
     return df.reset_index(drop=True)
 
@@ -74,10 +85,13 @@ def build_tensors(df: pd.DataFrame, stats: dict):
     X_gfs     = normalize(df, stats, GFS_FEATURES)
     X_obs     = normalize(df, stats, OBS_FEATURES)
     X_spatial = df[SPATIAL_FEATURES].values.astype(np.float32)
+    # Temporal features are already in [-1, 1] (sin/cos), no normalization needed
+    X_temporal = df[TEMPORAL_FEATURES].values.astype(np.float32)
 
     return (
         torch.from_numpy(X_gfs),
         torch.from_numpy(X_spatial),
+        torch.from_numpy(X_temporal),
         torch.from_numpy(X_obs),
     )
 
@@ -98,8 +112,8 @@ def main():
     val_df   = df.iloc[n_train:]
 
     for split_name, split_df in [("train", train_df), ("val", val_df)]:
-        gfs, spatial, obs = build_tensors(split_df, stats)
-        torch.save({"gfs": gfs, "spatial": spatial, "obs": obs},
+        gfs, spatial, temporal, obs = build_tensors(split_df, stats)
+        torch.save({"gfs": gfs, "spatial": spatial, "temporal": temporal, "obs": obs},
                    PROC_DIR / f"{split_name}.pt")
         print(f"Saved {split_name}.pt  — {len(split_df)} samples")
 

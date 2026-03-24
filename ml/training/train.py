@@ -41,8 +41,9 @@ def load_split(name: str) -> TensorDataset:
             f"{path} not found. Run data/collect_training_data.py then data/build_dataset.py first."
         )
     d = torch.load(path, weights_only=True)
-    # d keys: gfs [N,6], spatial [N,2], obs [N,6]
-    return TensorDataset(d["gfs"], d["spatial"], d["obs"])
+    # d keys: gfs [N,6], spatial [N,2], temporal [N,4], obs [N,6]
+    temporal = d.get("temporal", torch.zeros(d["gfs"].shape[0], 4))
+    return TensorDataset(d["gfs"], d["spatial"], temporal, d["obs"])
 
 
 def train(args: argparse.Namespace):
@@ -68,21 +69,23 @@ def train(args: argparse.Namespace):
         # --- train ---
         model.train()
         train_loss = 0.0
-        for gfs, spatial, obs in tqdm(train_loader, desc=f"Ep {epoch:3d}", leave=False):
-            gfs     = gfs.to(device)
-            spatial = spatial.to(device)
-            obs     = obs.to(device)
-            train_loss += svi.step(gfs, spatial, obs)
+        for gfs, spatial, temporal, obs in tqdm(train_loader, desc=f"Ep {epoch:3d}", leave=False):
+            gfs      = gfs.to(device)
+            spatial  = spatial.to(device)
+            temporal = temporal.to(device)
+            obs      = obs.to(device)
+            train_loss += svi.step(gfs, spatial, obs, temporal)
 
         # --- validate (ELBO on val set, no parameter update) ---
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for gfs, spatial, obs in val_loader:
-                gfs     = gfs.to(device)
-                spatial = spatial.to(device)
-                obs     = obs.to(device)
-                val_loss += svi.evaluate_loss(gfs, spatial, obs)
+            for gfs, spatial, temporal, obs in val_loader:
+                gfs      = gfs.to(device)
+                spatial  = spatial.to(device)
+                temporal = temporal.to(device)
+                obs      = obs.to(device)
+                val_loss += svi.evaluate_loss(gfs, spatial, obs, temporal)
 
         avg_train = train_loss / len(train_loader)
         avg_val   = val_loss   / len(val_loader)
