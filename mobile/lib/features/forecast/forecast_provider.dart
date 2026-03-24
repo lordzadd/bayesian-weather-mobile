@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/models/forecast_result.dart';
 import '../../core/services/location_service.dart';
 import '../../core/services/open_meteo_service.dart';
+import '../../core/services/prediction_history_dao.dart';
 import '../../inference/bma_engine.dart';
 import '../../inference/forecast_cache_service.dart';
 import '../settings/settings_provider.dart';
@@ -15,6 +16,7 @@ final forecastProvider =
 class ForecastNotifier extends AsyncNotifier<ForecastResult> {
   late final OpenMeteoService _weather;
   late final LocationService _location;
+  final PredictionHistoryDao _historyDao = PredictionHistoryDao();
 
   @override
   Future<ForecastResult> build() async {
@@ -43,28 +45,45 @@ class ForecastNotifier extends AsyncNotifier<ForecastResult> {
     final gfsForecast = data?.gfs ?? [15.0, 1013.25, 0.0, 0.0, 0.0, 60.0];
     final obsFeatures = data?.obs;
 
+    ForecastResult result;
+
     // 3. Variant A: always run inference, no caching
     if (settings.variant == InferenceVariant.gpuAlways) {
-      return BmaEngine.instance.infer(
+      result = await BmaEngine.instance.infer(
         gfsForecast: gfsForecast,
         obsFeatures: obsFeatures,
         spatialEmbed: spatial,
       );
+    } else {
+      // 4. Variant B: cache-gated inference using live threshold settings
+      final cache = ForecastCacheService(
+        temperatureThresholdC: settings.tempThresholdC,
+        windSpeedThresholdMs: settings.windThresholdMs,
+      );
+      final snapshot = (obsFeatures ?? gfsForecast).toSnapshot();
+      result = await cache.getForecast(
+        lat: lat,
+        lon: lon,
+        gfsForecast: gfsForecast,
+        obsFeatures: obsFeatures,
+        spatialEmbed: spatial,
+        newObservation: snapshot,
+      );
     }
 
-    // 4. Variant B: cache-gated inference using live threshold settings
-    final cache = ForecastCacheService(
-      temperatureThresholdC: settings.tempThresholdC,
-      windSpeedThresholdMs: settings.windThresholdMs,
+    // 5. Fire-and-forget: persist prediction to history
+    final now = DateTime.now();
+    final targetHour = DateTime(now.year, now.month, now.day, now.hour)
+        .add(const Duration(hours: 1));
+    _historyDao.insert(
+      timestamp: now,
+      targetTimestamp: targetHour,
+      latitude: lat,
+      longitude: lon,
+      stationId: nearestStation(lat, lon),
+      result: result,
     );
-    final snapshot = (obsFeatures ?? gfsForecast).toSnapshot();
-    return cache.getForecast(
-      lat: lat,
-      lon: lon,
-      gfsForecast: gfsForecast,
-      obsFeatures: obsFeatures,
-      spatialEmbed: spatial,
-      newObservation: snapshot,
-    );
+
+    return result;
   }
 }
