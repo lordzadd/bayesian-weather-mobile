@@ -64,6 +64,7 @@ def train(args: argparse.Namespace):
     svi   = build_svi(model, lr=args.lr)
 
     best_val_loss = float("inf")
+    patience_counter = 0
 
     for epoch in range(1, args.epochs + 1):
         # --- train ---
@@ -95,6 +96,7 @@ def train(args: argparse.Namespace):
 
         if avg_val < best_val_loss:
             best_val_loss = avg_val
+            patience_counter = 0
             torch.save({
                 "epoch":       epoch,
                 "model_state": model.state_dict(),
@@ -102,13 +104,19 @@ def train(args: argparse.Namespace):
                 "val_loss":    best_val_loss,
                 "args":        vars(args),
             }, CKPT_DIR / "bma_best.pt")
+        else:
+            patience_counter += 1
+            if patience_counter >= args.patience:
+                log.info(f"Early stop at epoch {epoch} (no improvement for {args.patience} epochs)")
+                break
 
     log.info(f"Done. Best val ELBO: {best_val_loss:.2f}  →  checkpoints/bma_best.pt")
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--epochs",     type=int,   default=150)
+    p.add_argument("--epochs",     type=int,   default=300)
+    p.add_argument("--patience",   type=int,   default=15, help="Early stop after N epochs without val improvement")
     p.add_argument("--lr",         type=float, default=1e-3)
     p.add_argument("--batch-size", type=int,   default=512)
     p.add_argument("--hidden-dim", type=int,   default=64)

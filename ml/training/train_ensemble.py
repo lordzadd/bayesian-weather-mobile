@@ -61,6 +61,7 @@ def train_single(seed: int, args: argparse.Namespace) -> float:
     svi = build_svi(model, lr=args.lr)
 
     best_val_loss = float("inf")
+    patience_counter = 0
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -92,6 +93,7 @@ def train_single(seed: int, args: argparse.Namespace) -> float:
 
         if avg_val < best_val_loss:
             best_val_loss = avg_val
+            patience_counter = 0
             torch.save({
                 "epoch": epoch,
                 "model_state": model.state_dict(),
@@ -100,6 +102,11 @@ def train_single(seed: int, args: argparse.Namespace) -> float:
                 "seed": seed,
                 "args": vars(args),
             }, CKPT_DIR / f"bma_ensemble_{seed}.pt")
+        else:
+            patience_counter += 1
+            if patience_counter >= args.patience:
+                log.info(f"  Seed {seed} | Early stop at epoch {epoch} (no improvement for {args.patience} epochs)")
+                break
 
     return best_val_loss
 
@@ -107,7 +114,8 @@ def train_single(seed: int, args: argparse.Namespace) -> float:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--n-models", type=int, default=5)
-    p.add_argument("--epochs", type=int, default=150)
+    p.add_argument("--epochs", type=int, default=300)
+    p.add_argument("--patience", type=int, default=15, help="Early stop after N epochs without val improvement")
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--batch-size", type=int, default=512)
     p.add_argument("--hidden-dim", type=int, default=64)
