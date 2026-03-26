@@ -14,22 +14,55 @@ final _mapLocationProvider =
   return ref.read(locationServiceProvider).currentPosition();
 });
 
-class MapScreen extends ConsumerWidget {
+class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MapScreen> createState() => _MapScreenState();
+}
+
+class _MapScreenState extends ConsumerState<MapScreen> {
+  final _mapController = MapController();
+  bool _movedToGps = false;
+
+  @override
+  Widget build(BuildContext context) {
     final forecast = ref.watch(forecastProvider);
     final location = ref.watch(_mapLocationProvider);
+
+    // Move the map once GPS resolves — initialCenter only applies at build time
+    location.whenData((loc) {
+      if (!_movedToGps) {
+        _movedToGps = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _mapController.move(LatLng(loc.lat, loc.lon), 9);
+        });
+      }
+    });
 
     final centerLat = location.valueOrNull?.lat ?? 37.7749;
     final centerLon = location.valueOrNull?.lon ?? -122.4194;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Probabilistic Heatmap')),
+      appBar: AppBar(
+        title: const Text('Probabilistic Heatmap'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.my_location),
+            tooltip: 'Re-centre on GPS',
+            onPressed: () {
+              final loc = ref.read(_mapLocationProvider).valueOrNull;
+              if (loc != null) {
+                _mapController.move(LatLng(loc.lat, loc.lon), 9);
+              }
+            },
+          ),
+        ],
+      ),
       body: Stack(
         children: [
           FlutterMap(
+            mapController: _mapController,
             options: MapOptions(
               initialCenter: LatLng(centerLat, centerLon),
               initialZoom: 9,

@@ -154,15 +154,21 @@ class LstmDartEngine {
     for (int j = 0; j < hs; j++) {
       final i = _sigmoid(raw[j]);
       final f = _sigmoid(raw[hs + j]);
-      final g = math.tanh(raw[2 * hs + j]);
+      final g = _tanh(raw[2 * hs + j]);
       final o = _sigmoid(raw[3 * hs + j]);
       newC[j] = f * c[j] + i * g;
-      newH[j] = o * math.tanh(newC[j]);
+      newH[j] = o * _tanh(newC[j]);
     }
     return (newH, newC);
   }
 
   static double _sigmoid(double x) => 1.0 / (1.0 + math.exp(-x.clamp(-20, 20)));
+
+  static double _tanh(double x) {
+    final cx = x.clamp(-20.0, 20.0);
+    final e2 = math.exp(2.0 * cx);
+    return (e2 - 1.0) / (e2 + 1.0);
+  }
 
   List<double> _normalize(List<double> raw, List<String> cols) {
     return List.generate(cols.length, (i) {
