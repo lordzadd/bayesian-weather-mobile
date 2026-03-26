@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models/forecast_result.dart';
+import '../../core/services/connectivity_service.dart';
 import '../../shared/widgets/wind_arrow.dart';
+import '../locations/saved_locations_provider.dart';
 import 'forecast_provider.dart';
 
 class ForecastScreen extends ConsumerWidget {
@@ -26,10 +28,104 @@ class ForecastScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: state.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _ErrorView(error: e.toString()),
-        data: (result) => _ForecastBody(result: result),
+      body: Column(
+        children: [
+          _OfflineBanner(),
+          _LocationChipBar(),
+          Expanded(
+            child: state.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => _ErrorView(error: e.toString()),
+              data: (result) => _ForecastBody(result: result),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OfflineBanner extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final connectivity = ref.watch(connectivityProvider);
+    final isOffline = connectivity.whenOrNull(data: (v) => !v) ?? false;
+    if (!isOffline) return const SizedBox.shrink();
+    return Container(
+      color: Colors.orange.shade900,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: const Row(
+        children: [
+          Icon(Icons.wifi_off, size: 14, color: Colors.white),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Offline — showing last cached forecast',
+              style: TextStyle(color: Colors.white, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LocationChipBar extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final saved    = ref.watch(savedLocationsProvider);
+    final selected = ref.watch(selectedLocationProvider);
+
+    final locations = saved.valueOrNull ?? [];
+    if (locations.isEmpty) return const SizedBox.shrink();
+
+    return SizedBox(
+      height: 40,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        children: [
+          // "GPS" chip to clear any override
+          ActionChip(
+            label: const Text('GPS'),
+            avatar: Icon(
+              Icons.my_location,
+              size: 14,
+              color: selected == null
+                  ? Theme.of(context).colorScheme.onPrimary
+                  : null,
+            ),
+            backgroundColor: selected == null
+                ? Theme.of(context).colorScheme.primary
+                : null,
+            labelStyle: selected == null
+                ? TextStyle(color: Theme.of(context).colorScheme.onPrimary)
+                : null,
+            onPressed: () {
+              ref.read(selectedLocationProvider.notifier).state = null;
+              ref.read(forecastProvider.notifier).refresh();
+            },
+          ),
+          ...locations.map((loc) {
+            final isSelected = selected?.id == loc.id;
+            return Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: ActionChip(
+                label: Text(loc.name),
+                backgroundColor: isSelected
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+                labelStyle: isSelected
+                    ? TextStyle(color: Theme.of(context).colorScheme.onPrimary)
+                    : null,
+                onPressed: () {
+                  ref.read(selectedLocationProvider.notifier).state = loc;
+                  ref.read(forecastProvider.notifier).refresh();
+                },
+              ),
+            );
+          }),
+        ],
       ),
     );
   }

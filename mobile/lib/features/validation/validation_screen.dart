@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -173,16 +175,54 @@ class _SummaryTable extends StatelessWidget {
       );
     }
 
+    // Compute best (lowest) MAE per metric across all models
+    double best(String key) => summary
+        .map((r) => (r[key] as num).toDouble())
+        .reduce(math.min);
+
+    final bestTemp     = best('avg_temp_ae');
+    final bestPressure = best('avg_pressure_ae');
+    final bestWind     = best('avg_wind_ae');
+    final bestHumidity = best('avg_humidity_ae');
+
+    // Best overall: model with lowest temp MAE (primary metric)
+    final bestOverall = summary
+        .reduce((a, b) =>
+            (a['avg_temp_ae'] as num) <= (b['avg_temp_ae'] as num) ? a : b)['model_variant'] as String;
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Running averages (last 20 runs)',
-                style: Theme.of(context).textTheme.titleSmall),
+            Row(
+              children: [
+                Text('Model Accuracy Comparison',
+                    style: Theme.of(context).textTheme.titleSmall),
+                const Spacer(),
+                Text('last 20 runs',
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelSmall
+                        ?.copyWith(color: Colors.grey)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text('Green = best per metric',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.grey)),
             const SizedBox(height: 12),
-            ...summary.map((row) => _ModelSummaryRow(row: row)),
+            ...summary.map((row) => _ModelSummaryRow(
+                  row: row,
+                  bestTemp: bestTemp,
+                  bestPressure: bestPressure,
+                  bestWind: bestWind,
+                  bestHumidity: bestHumidity,
+                  isBestOverall: row['model_variant'] == bestOverall,
+                )),
           ],
         ),
       ),
@@ -192,13 +232,32 @@ class _SummaryTable extends StatelessWidget {
 
 class _ModelSummaryRow extends StatelessWidget {
   final Map<String, dynamic> row;
-  const _ModelSummaryRow({required this.row});
+  final double bestTemp;
+  final double bestPressure;
+  final double bestWind;
+  final double bestHumidity;
+  final bool isBestOverall;
+
+  const _ModelSummaryRow({
+    required this.row,
+    required this.bestTemp,
+    required this.bestPressure,
+    required this.bestWind,
+    required this.bestHumidity,
+    required this.isBestOverall,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final model = row['model_variant'] as String;
-    final runs = row['run_count'] as int;
+    final model    = row['model_variant'] as String;
+    final runs     = row['run_count'] as int;
     final coverage = ((row['coverage_rate'] as num).toDouble() * 100);
+    final tempAe   = (row['avg_temp_ae'] as num).toDouble();
+    final presAe   = (row['avg_pressure_ae'] as num).toDouble();
+    final windAe   = (row['avg_wind_ae'] as num).toDouble();
+    final humAe    = (row['avg_humidity_ae'] as num).toDouble();
+
+    const tol = 1e-6;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -210,8 +269,20 @@ class _ModelSummaryRow extends StatelessWidget {
                     .textTheme
                     .labelMedium
                     ?.copyWith(fontWeight: FontWeight.bold)),
+            if (isBestOverall) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade800,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text('BEST',
+                    style: TextStyle(fontSize: 9, color: Colors.white)),
+              ),
+            ],
             const Spacer(),
-            Text('$runs runs · ${coverage.toStringAsFixed(0)}% 2σ coverage',
+            Text('$runs runs · ${coverage.toStringAsFixed(0)}% 2σ',
                 style: Theme.of(context)
                     .textTheme
                     .labelSmall
@@ -219,16 +290,57 @@ class _ModelSummaryRow extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 4),
-        _MetricRow('Temp MAE',
-            '${(row['avg_temp_ae'] as num).toStringAsFixed(2)} °C'),
-        _MetricRow('Pressure MAE',
-            '${(row['avg_pressure_ae'] as num).toStringAsFixed(2)} hPa'),
-        _MetricRow('Wind MAE',
-            '${(row['avg_wind_ae'] as num).toStringAsFixed(2)} m/s'),
-        _MetricRow('Humidity MAE',
-            '${(row['avg_humidity_ae'] as num).toStringAsFixed(1)} %'),
+        _CompMetricRow('Temp MAE',
+            '${tempAe.toStringAsFixed(2)} °C',
+            isBest: (tempAe - bestTemp).abs() < tol),
+        _CompMetricRow('Pressure MAE',
+            '${presAe.toStringAsFixed(2)} hPa',
+            isBest: (presAe - bestPressure).abs() < tol),
+        _CompMetricRow('Wind MAE',
+            '${windAe.toStringAsFixed(2)} m/s',
+            isBest: (windAe - bestWind).abs() < tol),
+        _CompMetricRow('Humidity MAE',
+            '${humAe.toStringAsFixed(1)} %',
+            isBest: (humAe - bestHumidity).abs() < tol),
         const Divider(height: 16),
       ],
+    );
+  }
+}
+
+class _CompMetricRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool isBest;
+  const _CompMetricRow(this.label, this.value, {required this.isBest});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: Theme.of(context).textTheme.bodySmall),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isBest)
+                const Padding(
+                  padding: EdgeInsets.only(right: 4),
+                  child: Icon(Icons.star, size: 12, color: Colors.green),
+                ),
+              Text(
+                value,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: isBest ? Colors.green.shade400 : null,
+                      fontWeight: isBest ? FontWeight.bold : null,
+                    ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

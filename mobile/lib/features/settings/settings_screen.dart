@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../benchmark/benchmark_screen.dart';
 import '../forecast/forecast_provider.dart';
+import '../locations/saved_locations_provider.dart';
 import 'settings_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -125,6 +126,44 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 16),
+          _SectionHeader('Notifications'),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SwitchListTile(
+                    title: const Text('Weather change alerts'),
+                    subtitle: const Text(
+                        'Alert when temperature shifts significantly'),
+                    value: settings.notificationsEnabled,
+                    onChanged: (v) => notifier.setNotificationsEnabled(v),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Alert threshold: ${settings.alertTempChangeC.toStringAsFixed(1)}°C',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  Slider(
+                    value: settings.alertTempChangeC,
+                    min: 1.0,
+                    max: 10.0,
+                    divisions: 18,
+                    label: '${settings.alertTempChangeC.toStringAsFixed(1)}°C',
+                    onChanged: settings.notificationsEnabled
+                        ? (v) => notifier.setAlertTempChangeC(v)
+                        : null,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          _SectionHeader('Saved Locations'),
+          _SavedLocationsCard(),
+          const SizedBox(height: 16),
           _SectionHeader('Benchmarking'),
           Card(
             child: ListTile(
@@ -136,6 +175,118 @@ class SettingsScreen extends ConsumerWidget {
                 MaterialPageRoute(builder: (_) => const BenchmarkScreen()),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SavedLocationsCard extends ConsumerStatefulWidget {
+  @override
+  ConsumerState<_SavedLocationsCard> createState() =>
+      _SavedLocationsCardState();
+}
+
+class _SavedLocationsCardState extends ConsumerState<_SavedLocationsCard> {
+  final _nameController = TextEditingController();
+  final _latController  = TextEditingController();
+  final _lonController  = TextEditingController();
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _latController.dispose();
+    _lonController.dispose();
+    super.dispose();
+  }
+
+  void _showAddDialog() {
+    _nameController.clear();
+    _latController.clear();
+    _lonController.clear();
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Add Location'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(labelText: 'Name'),
+            ),
+            TextField(
+              controller: _latController,
+              decoration: const InputDecoration(labelText: 'Latitude'),
+              keyboardType: const TextInputType.numberWithOptions(
+                  signed: true, decimal: true),
+            ),
+            TextField(
+              controller: _lonController,
+              decoration: const InputDecoration(labelText: 'Longitude'),
+              keyboardType: const TextInputType.numberWithOptions(
+                  signed: true, decimal: true),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final name = _nameController.text.trim();
+              final lat  = double.tryParse(_latController.text);
+              final lon  = double.tryParse(_lonController.text);
+              if (name.isNotEmpty && lat != null && lon != null) {
+                ref
+                    .read(savedLocationsProvider.notifier)
+                    .add(name: name, lat: lat, lon: lon);
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final locations = ref.watch(savedLocationsProvider).valueOrNull ?? [];
+
+    return Card(
+      child: Column(
+        children: [
+          if (locations.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'No saved locations yet.',
+                style: TextStyle(color: Colors.grey),
+              ),
+            )
+          else
+            ...locations.map((loc) => ListTile(
+                  leading: const Icon(Icons.location_on_outlined, size: 18),
+                  title: Text(loc.name),
+                  subtitle: Text(
+                    '${loc.lat.toStringAsFixed(3)}, ${loc.lon.toStringAsFixed(3)}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    onPressed: () =>
+                        ref.read(savedLocationsProvider.notifier).remove(loc.id),
+                  ),
+                )),
+          ListTile(
+            leading: const Icon(Icons.add_location_alt_outlined),
+            title: const Text('Add location'),
+            onTap: _showAddDialog,
           ),
         ],
       ),

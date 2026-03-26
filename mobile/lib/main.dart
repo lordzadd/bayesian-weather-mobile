@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/services/database_service.dart';
+import 'core/services/notification_service.dart';
 import 'inference/bma_engine.dart';
 import 'inference/linear_dart_engine.dart';
 import 'inference/lstm_dart_engine.dart';
@@ -16,6 +17,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await DatabaseService.instance.initialize();
   await BmaEngine.instance.initialize();
+  await NotificationService.instance.initialize();
   // Pre-load lightweight model weights in parallel; failures are silent
   await Future.wait([
     LinearDartEngine.instance.load(),

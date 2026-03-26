@@ -16,7 +16,7 @@ class DatabaseService {
   static final DatabaseService instance = DatabaseService._();
 
   static const _dbName = 'bayesian_weather.db';
-  static const _dbVersion = 2;
+  static const _dbVersion = 3;
 
   Database? _db;
 
@@ -59,12 +59,16 @@ class DatabaseService {
 
     await _createHistoryTable(db);
     await _createLookbackTable(db);
+    await _createSavedLocationsTable(db);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       await _createHistoryTable(db);
       await _createLookbackTable(db);
+    }
+    if (oldVersion < 3) {
+      await _createSavedLocationsTable(db);
     }
   }
 
@@ -273,6 +277,45 @@ class DatabaseService {
       'lookback_accuracy',
       orderBy: 'timestamp DESC',
       limit: limit,
+    );
+  }
+
+  // ── Saved locations ───────────────────────────────────────────────────────
+
+  Future<void> _createSavedLocationsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE saved_locations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        lat REAL NOT NULL,
+        lon REAL NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+  }
+
+  Future<int> insertSavedLocation({
+    required String name,
+    required double lat,
+    required double lon,
+  }) async {
+    return _database.insert('saved_locations', {
+      'name': name,
+      'lat': lat,
+      'lon': lon,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getSavedLocations() async {
+    return _database.query('saved_locations', orderBy: 'created_at ASC');
+  }
+
+  Future<void> deleteSavedLocation(int id) async {
+    await _database.delete(
+      'saved_locations',
+      where: 'id = ?',
+      whereArgs: [id],
     );
   }
 
