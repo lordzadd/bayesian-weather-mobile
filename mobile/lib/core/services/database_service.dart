@@ -4,16 +4,19 @@ import 'dart:convert';
 
 import '../models/forecast_result.dart';
 
-/// SQLite-backed persistence layer for Variant B (cache-optimized) inference.
+/// SQLite-backed persistence layer.
 ///
-/// Stores serialized [ForecastResult] records keyed by (lat, lon, timestamp_bucket).
-/// The significance threshold check is performed by [ForecastCacheService].
+/// Tables:
+///   posterior_cache   — Variant B cache-gated inference (keyed by location+hour)
+///   benchmark_log     — per-inference latency records
+///   forecast_history  — every ForecastResult ever produced (for history screen)
+///   lookback_accuracy — results of 1-hour lookback validation runs
 class DatabaseService {
   DatabaseService._();
   static final DatabaseService instance = DatabaseService._();
 
   static const _dbName = 'bayesian_weather.db';
-  static const _dbVersion = 1;
+  static const _dbVersion = 2;
 
   Database? _db;
 
@@ -23,6 +26,7 @@ class DatabaseService {
       dbPath,
       version: _dbVersion,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
@@ -50,6 +54,56 @@ class DatabaseService {
         inference_ms INTEGER NOT NULL,
         cache_hit INTEGER NOT NULL,
         timestamp INTEGER NOT NULL
+      )
+    ''');
+
+    await _createHistoryTable(db);
+    await _createLookbackTable(db);
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await _createHistoryTable(db);
+      await _createLookbackTable(db);
+    }
+  }
+
+  Future<void> _createHistoryTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE forecast_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp INTEGER NOT NULL,
+        lat REAL NOT NULL,
+        lon REAL NOT NULL,
+        temp_mean REAL NOT NULL,
+        temp_std REAL NOT NULL,
+        pressure_hpa REAL NOT NULL,
+        wind_speed_ms REAL NOT NULL,
+        wind_speed_std REAL NOT NULL,
+        precip_mm REAL NOT NULL,
+        humidity_pct REAL NOT NULL,
+        inference_source TEXT NOT NULL,
+        model_variant TEXT NOT NULL DEFAULT 'bma'
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX idx_history_ts ON forecast_history(timestamp DESC)');
+  }
+
+  Future<void> _createLookbackTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE lookback_accuracy (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp INTEGER NOT NULL,
+        lat REAL NOT NULL,
+        lon REAL NOT NULL,
+        model_variant TEXT NOT NULL,
+        temp_ae REAL NOT NULL,
+        pressure_ae REAL NOT NULL,
+        wind_speed_ae REAL NOT NULL,
+        humidity_ae REAL NOT NULL,
+        precip_ae REAL NOT NULL,
+        within_2sigma INTEGER NOT NULL
       )
     ''');
   }
@@ -125,6 +179,104 @@ class DatabaseService {
       whereArgs: [cutoff],
     );
   }
+
+  // ── Forecast history ──────────────────────────────────────────────────────
+
+  /// Appends a forecast to the history table and prunes oldest rows above [limit].
+  Future<void> insertForecastHistory({
+    required double lat,
+    required double lon,
+    required ForecastResult result,
+    String modelVariant = 'bma',
+    int limit = 500,
+  }) async {
+    await _database.insert('forecast_history', {
+      'timestamp': result.computedAt.millisecondsSinceEpoch,
+      'lat': lat,
+      'lon': lon,
+      'temp_mean': result.temperatureC,
+      'temp_std': result.temperatureStd,
+      'pressure_hpa': result.surfacePressureHpa,
+      'wind_speed_ms': result.windSpeedMs,
+      'wind_speed_std': result.windSpeedStd,
+      'precip_mm': result.precipitationMm,
+      'humidity_pct': result.relativeHumidityPct,
+      'inference_source': result.source.name,
+      'model_variant': modelVariant,
+    });
+    // Purge oldest rows beyond the retention limit
+    await _database.rawDelete('''
+      DELETE FROM forecast_history
+      WHERE id NOT IN (
+        SELECT id FROM forecast_history ORDER BY timestamp DESC LIMIT $limit
+      )
+    ''');
+  }
+
+  /// Returns up to [limit] most-recent history rows, newest first.
+  Future<List<Map<String, dynamic>>> getRecentHistory({int limit = 100}) async {
+    return _database.query(
+      'forecast_history',
+      orderBy: 'timestamp DESC',
+      limit: limit,
+    );
+  }
+
+  // ── Lookback accuracy ─────────────────────────────────────────────────────
+
+  Future<void> insertLookbackAccuracy({
+    required double lat,
+    required double lon,
+    required String modelVariant,
+    required double tempAe,
+    required double pressureAe,
+    required double windSpeedAe,
+    required double humidityAe,
+    required double precipAe,
+    required bool within2Sigma,
+  }) async {
+    await _database.insert('lookback_accuracy', {
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+      'lat': lat,
+      'lon': lon,
+      'model_variant': modelVariant,
+      'temp_ae': tempAe,
+      'pressure_ae': pressureAe,
+      'wind_speed_ae': windSpeedAe,
+      'humidity_ae': humidityAe,
+      'precip_ae': precipAe,
+      'within_2sigma': within2Sigma ? 1 : 0,
+    });
+  }
+
+  /// Returns lookback rows newest first, grouped summary per [modelVariant].
+  Future<List<Map<String, dynamic>>> getLookbackSummary({int limit = 20}) async {
+    return _database.rawQuery('''
+      SELECT
+        model_variant,
+        AVG(temp_ae)       AS avg_temp_ae,
+        AVG(pressure_ae)   AS avg_pressure_ae,
+        AVG(wind_speed_ae) AS avg_wind_ae,
+        AVG(humidity_ae)   AS avg_humidity_ae,
+        AVG(precip_ae)     AS avg_precip_ae,
+        AVG(within_2sigma) AS coverage_rate,
+        COUNT(*)           AS run_count
+      FROM (
+        SELECT * FROM lookback_accuracy ORDER BY timestamp DESC LIMIT $limit
+      )
+      GROUP BY model_variant
+    ''');
+  }
+
+  Future<List<Map<String, dynamic>>> getLookbackRuns({int limit = 50}) async {
+    return _database.query(
+      'lookback_accuracy',
+      orderBy: 'timestamp DESC',
+      limit: limit,
+    );
+  }
+
+  // ── Utilities ─────────────────────────────────────────────────────────────
 
   /// Buckets a DateTime to the nearest hour for cache keying.
   int _timeBucket(DateTime t) =>

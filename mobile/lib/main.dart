@@ -5,8 +5,10 @@ import 'core/services/database_service.dart';
 import 'inference/bma_engine.dart';
 import 'features/benchmark/benchmark_screen.dart';
 import 'features/forecast/forecast_screen.dart';
+import 'features/history/history_screen.dart';
 import 'features/map/map_screen.dart';
 import 'features/settings/settings_screen.dart';
+import 'features/validation/validation_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,6 +49,8 @@ class _MainShellState extends State<MainShell> {
   static const List<Widget> _pages = [
     ForecastScreen(),
     MapScreen(),
+    HistoryScreen(),
+    ValidationScreen(),
     BenchmarkScreen(),
     SettingsScreen(),
   ];
@@ -61,6 +65,8 @@ class _MainShellState extends State<MainShell> {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.cloud), label: 'Forecast'),
           NavigationDestination(icon: Icon(Icons.map), label: 'Map'),
+          NavigationDestination(icon: Icon(Icons.history), label: 'History'),
+          NavigationDestination(icon: Icon(Icons.science_outlined), label: 'Validate'),
           NavigationDestination(icon: Icon(Icons.analytics_outlined), label: 'Benchmark'),
           NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
         ],

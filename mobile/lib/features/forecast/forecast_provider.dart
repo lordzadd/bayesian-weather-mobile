@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models/forecast_result.dart';
+import '../../core/services/database_service.dart';
 import '../../core/services/location_service.dart';
 import '../../core/services/open_meteo_service.dart';
 import '../../inference/bma_engine.dart';
@@ -45,11 +46,13 @@ class ForecastNotifier extends AsyncNotifier<ForecastResult> {
 
     // 3. Variant A: always run inference, no caching
     if (settings.variant == InferenceVariant.gpuAlways) {
-      return BmaEngine.instance.infer(
+      final result = await BmaEngine.instance.infer(
         gfsForecast: gfsForecast,
         obsFeatures: obsFeatures,
         spatialEmbed: spatial,
       );
+      _saveHistory(lat, lon, result);
+      return result;
     }
 
     // 4. Variant B: cache-gated inference using live threshold settings
@@ -58,13 +61,23 @@ class ForecastNotifier extends AsyncNotifier<ForecastResult> {
       windSpeedThresholdMs: settings.windThresholdMs,
     );
     final snapshot = (obsFeatures ?? gfsForecast).toSnapshot();
-    return cache.getForecast(
+    final result = await cache.getForecast(
       lat: lat,
       lon: lon,
       gfsForecast: gfsForecast,
       obsFeatures: obsFeatures,
       spatialEmbed: spatial,
       newObservation: snapshot,
+    );
+    _saveHistory(lat, lon, result);
+    return result;
+  }
+
+  void _saveHistory(double lat, double lon, ForecastResult result) {
+    DatabaseService.instance.insertForecastHistory(
+      lat: lat,
+      lon: lon,
+      result: result,
     );
   }
 }
