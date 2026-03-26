@@ -68,7 +68,7 @@ class LocationService {
       final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.low, // low accuracy is sufficient for weather
-          timeLimit: Duration(seconds: 5),
+          timeLimit: Duration(seconds: 15),
         ),
       );
       return (lat: pos.latitude, lon: pos.longitude);
