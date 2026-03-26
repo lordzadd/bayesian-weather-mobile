@@ -2,10 +2,15 @@ import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/models/forecast_result.dart';
 import '../../core/services/database_service.dart';
 import '../../core/services/location_service.dart';
+import '../../core/services/observation_buffer_service.dart';
 import '../../core/services/open_meteo_service.dart';
 import '../../inference/bma_engine.dart';
+import '../../inference/linear_dart_engine.dart';
+import '../../inference/lstm_dart_engine.dart';
+import '../settings/settings_provider.dart';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -57,12 +62,14 @@ class ValidationNotifier extends AsyncNotifier<ValidationState> {
     return ValidationState(summary: summary);
   }
 
-  Future<void> runLookback() async {
+  Future<void> runLookback({ModelVariant? overrideVariant}) async {
     state = AsyncData(state.value!.copyWith(status: ValidationStatus.running));
 
     try {
       final location = ref.read(locationServiceProvider);
-      final weather = ref.read(openMeteoServiceProvider);
+      final weather  = ref.read(openMeteoServiceProvider);
+      final settings = ref.read(settingsProvider);
+      final modelVariant = overrideVariant ?? settings.modelVariant;
 
       final (:lat, :lon) = await location.currentPosition();
       final spatial = [lat / 90.0, lon / 180.0];
@@ -70,11 +77,25 @@ class ValidationNotifier extends AsyncNotifier<ValidationState> {
       final pair = await weather.fetchLookbackPair(lat, lon);
       if (pair == null) throw Exception('Failed to fetch lookback data');
 
-      final result = await BmaEngine.instance.infer(
-        gfsForecast: pair.gfsT0,
-        obsFeatures: pair.obsT1hr,
-        spatialEmbed: spatial,
-      );
+      final ForecastResult result;
+      switch (modelVariant) {
+        case ModelVariant.linear:
+          result = LinearDartEngine.instance.infer(
+            gfsForecast: pair.gfsT0,
+            obsFeatures: pair.obsT1hr,
+            spatialEmbed: spatial,
+          );
+        case ModelVariant.lstm:
+          ObservationBufferService.instance.push(lat, lon, [...pair.obsT1hr, ...spatial]);
+          final sequence = ObservationBufferService.instance.getSequence(lat, lon);
+          result = await LstmDartEngine.instance.infer(sequence: sequence);
+        case ModelVariant.bma:
+          result = await BmaEngine.instance.infer(
+            gfsForecast: pair.gfsT0,
+            obsFeatures: pair.obsT1hr,
+            spatialEmbed: spatial,
+          );
+      }
 
       final truth = pair.era5Now;
       // era5Now indices: [0]=temp, [1]=pressure, [2]=u-wind, [3]=v-wind, [4]=precip, [5]=humidity
@@ -97,7 +118,7 @@ class ValidationNotifier extends AsyncNotifier<ValidationState> {
       await DatabaseService.instance.insertLookbackAccuracy(
         lat: lat,
         lon: lon,
-        modelVariant: 'bma',
+        modelVariant: modelVariant.name,
         tempAe: tempAe,
         pressureAe: pressureAe,
         windSpeedAe: windAe,

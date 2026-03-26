@@ -46,6 +46,44 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 16),
+          _SectionHeader('Model Architecture'),
+          Card(
+            child: Column(
+              children: [
+                RadioListTile<ModelVariant>(
+                  title: const Text('BMA — Bayesian Model Averaging'),
+                  subtitle: const Text('SVI with heteroscedastic noise net'),
+                  value: ModelVariant.bma,
+                  groupValue: settings.modelVariant,
+                  onChanged: (v) {
+                    notifier.setModelVariant(v!);
+                    ref.read(forecastProvider.notifier).refresh();
+                  },
+                ),
+                RadioListTile<ModelVariant>(
+                  title: const Text('Linear — Ridge regression baseline'),
+                  subtitle: const Text('Fast bias-correction, no hidden layers'),
+                  value: ModelVariant.linear,
+                  groupValue: settings.modelVariant,
+                  onChanged: (v) {
+                    notifier.setModelVariant(v!);
+                    ref.read(forecastProvider.notifier).refresh();
+                  },
+                ),
+                RadioListTile<ModelVariant>(
+                  title: const Text('LSTM — Sequence model'),
+                  subtitle: const Text('Uses last 6 hourly observations'),
+                  value: ModelVariant.lstm,
+                  groupValue: settings.modelVariant,
+                  onChanged: (v) {
+                    notifier.setModelVariant(v!);
+                    ref.read(forecastProvider.notifier).refresh();
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
           _SectionHeader('Significance Thresholds'),
           Card(
             child: Padding(

@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/services/database_service.dart';
 import 'inference/bma_engine.dart';
+import 'inference/linear_dart_engine.dart';
+import 'inference/lstm_dart_engine.dart';
 import 'features/benchmark/benchmark_screen.dart';
 import 'features/forecast/forecast_screen.dart';
 import 'features/history/history_screen.dart';
@@ -13,7 +15,12 @@ import 'features/validation/validation_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await DatabaseService.instance.initialize();
-  await BmaEngine.instance.initialize(); // loads bma_weights.json before first screen
+  await BmaEngine.instance.initialize();
+  // Pre-load lightweight model weights in parallel; failures are silent
+  await Future.wait([
+    LinearDartEngine.instance.load(),
+    LstmDartEngine.instance.load(),
+  ]);
   runApp(const ProviderScope(child: WeatherApp()));
 }
 
