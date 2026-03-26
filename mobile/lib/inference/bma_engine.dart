@@ -143,11 +143,13 @@ class BmaEngine {
   }
 
   ForecastResult _toForecastResult(List<double> mean, List<double> std) {
+    final bearing = (math.atan2(mean[3], mean[2]) * 180.0 / math.pi + 360.0) % 360.0;
     return ForecastResult(
       temperatureC: mean[0],
       temperatureStd: std[0],
       windSpeedMs: math.sqrt(mean[2] * mean[2] + mean[3] * mean[3]),
       windSpeedStd: math.sqrt(std[2] * std[2] + std[3] * std[3]),
+      windBearingDeg: bearing,
       surfacePressureHpa: mean[1],
       relativeHumidityPct: mean[5].clamp(0, 100),
       precipitationMm: mean[4].clamp(0, double.infinity),

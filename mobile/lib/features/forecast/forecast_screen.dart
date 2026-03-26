@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models/forecast_result.dart';
+import '../../shared/widgets/wind_arrow.dart';
 import 'forecast_provider.dart';
 
 class ForecastScreen extends ConsumerWidget {
@@ -45,6 +46,8 @@ class _ForecastBody extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       children: [
         _PrimaryCard(result: result),
+        const SizedBox(height: 12),
+        _WindCard(result: result),
         const SizedBox(height: 12),
         _DetailGrid(result: result),
         const SizedBox(height: 12),
@@ -94,6 +97,52 @@ class _PrimaryCard extends StatelessWidget {
   }
 }
 
+class _WindCard extends StatelessWidget {
+  final ForecastResult result;
+  const _WindCard({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+        child: Row(
+          children: [
+            WindArrow(
+              bearingDeg: result.windBearingDeg,
+              speedMs: result.windSpeedMs,
+              speedStd: result.windSpeedStd,
+            ),
+            const SizedBox(width: 24),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Wind', style: Theme.of(context).textTheme.labelLarge),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${result.windSpeedMs.toStringAsFixed(1)} m/s  '
+                    '± ${result.windSpeedStd.toStringAsFixed(1)} m/s',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  Text(
+                    'From ${result.windBearingDeg.toStringAsFixed(0)}°  '
+                    '${result.windCompassPoint}',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _DetailGrid extends StatelessWidget {
   final ForecastResult result;
   const _DetailGrid({required this.result});
@@ -108,7 +157,6 @@ class _DetailGrid extends StatelessWidget {
       crossAxisSpacing: 8,
       mainAxisSpacing: 8,
       children: [
-        _Tile(label: 'Wind', value: '${result.windSpeedMs.toStringAsFixed(1)} m/s', icon: Icons.air),
         _Tile(label: 'Pressure', value: '${result.surfacePressureHpa.toStringAsFixed(0)} hPa', icon: Icons.compress),
         _Tile(label: 'Humidity', value: '${result.relativeHumidityPct.toStringAsFixed(0)}%', icon: Icons.water_drop),
         _Tile(label: 'Precip', value: '${result.precipitationMm.toStringAsFixed(1)} mm', icon: Icons.umbrella),
