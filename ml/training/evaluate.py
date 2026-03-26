@@ -41,7 +41,8 @@ def load_model(checkpoint_path: Path, n_features: int = 6) -> BMAModel:
     hidden_dim = ckpt.get("args", {}).get("hidden_dim", 64)
     model = BMAModel(n_features=n_features, hidden_dim=hidden_dim)
     model.load_state_dict(ckpt["model_state"])
-    pyro.get_param_store().set_state(ckpt["pyro_params"])
+    if "pyro_params" in ckpt:
+        pyro.get_param_store().set_state(ckpt["pyro_params"])
     model.eval()
     return model
 
