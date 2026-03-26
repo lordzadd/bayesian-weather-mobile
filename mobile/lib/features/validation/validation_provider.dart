@@ -71,7 +71,8 @@ class ValidationNotifier extends AsyncNotifier<ValidationState> {
       final settings = ref.read(settingsProvider);
       final modelVariant = overrideVariant ?? settings.modelVariant;
 
-      final (:lat, :lon) = await location.currentPosition();
+      final pos = await location.currentPosition();
+      final (lat, lon) = (pos.lat, pos.lon);
       final spatial = [lat / 90.0, lon / 180.0];
 
       final pair = await weather.fetchLookbackPair(lat, lon);

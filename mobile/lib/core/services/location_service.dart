@@ -1,22 +1,19 @@
 import 'package:geolocator/geolocator.dart';
 import 'package:riverpod/riverpod.dart';
 
-/// Nearest METAR stations to look up observations for a given coordinate.
-/// Mapped by approximate bounding box (lat range, lon range) → ICAO id.
 const _stationIndex = [
-  // CONUS major stations — expand as needed
-  _Station('KSFO', 37.619, -122.375),  // San Francisco
-  _Station('KLAX', 33.942, -118.408),  // Los Angeles
-  _Station('KORD', 41.978, -87.904),   // Chicago O'Hare
-  _Station('KJFK', 40.639, -73.778),   // New York JFK
-  _Station('KDEN', 39.861, -104.673),  // Denver
-  _Station('KDFW', 32.896, -97.038),   // Dallas/Fort Worth
-  _Station('KATL', 33.637, -84.428),   // Atlanta
-  _Station('KSEA', 47.449, -122.309),  // Seattle
-  _Station('KBOS', 42.364, -71.005),   // Boston
-  _Station('KMIA', 25.796, -80.287),   // Miami
-  _Station('KPHX', 33.435, -112.007),  // Phoenix
-  _Station('KLAS', 36.080, -115.152),  // Las Vegas
+  _Station('KSFO', 37.619, -122.375),
+  _Station('KLAX', 33.942, -118.408),
+  _Station('KORD', 41.978, -87.904),
+  _Station('KJFK', 40.639, -73.778),
+  _Station('KDEN', 39.861, -104.673),
+  _Station('KDFW', 32.896, -97.038),
+  _Station('KATL', 33.637, -84.428),
+  _Station('KSEA', 47.449, -122.309),
+  _Station('KBOS', 42.364, -71.005),
+  _Station('KMIA', 25.796, -80.287),
+  _Station('KPHX', 33.435, -112.007),
+  _Station('KLAS', 36.080, -115.152),
 ];
 
 class _Station {
@@ -26,16 +23,12 @@ class _Station {
   const _Station(this.id, this.lat, this.lon);
 }
 
-/// Returns the ICAO station id of the closest station to [lat]/[lon].
 String nearestStation(double lat, double lon) {
   _Station best = _stationIndex.first;
   double bestDist = double.infinity;
   for (final s in _stationIndex) {
     final d = _dist(lat, lon, s.lat, s.lon);
-    if (d < bestDist) {
-      bestDist = d;
-      best = s;
-    }
+    if (d < bestDist) { bestDist = d; best = s; }
   }
   return best.id;
 }
@@ -46,39 +39,70 @@ double _dist(double lat1, double lon1, double lat2, double lon2) {
   return dlat * dlat + dlon * dlon;
 }
 
-/// Current device position, falling back to San Francisco if permission denied.
+enum LocationFailReason { permissionDenied, permissionDeniedForever, serviceDisabled, timeout, error }
+
+class LocationResult {
+  final double lat;
+  final double lon;
+  /// null = real GPS. Non-null = fallback with reason.
+  final LocationFailReason? failReason;
+
+  const LocationResult({required this.lat, required this.lon, this.failReason});
+
+  bool get isFallback => failReason != null;
+
+  String get failMessage => switch (failReason) {
+    LocationFailReason.permissionDenied         => 'Location permission denied',
+    LocationFailReason.permissionDeniedForever  => 'Location permission permanently denied — open Settings to fix',
+    LocationFailReason.serviceDisabled          => 'Location services disabled on device',
+    LocationFailReason.timeout                  => 'GPS timed out — no fix available',
+    LocationFailReason.error                    => 'GPS unavailable',
+    null                                        => '',
+  };
+
+  bool get canOpenSettings => failReason == LocationFailReason.permissionDeniedForever;
+}
+
 class LocationService {
   static const _fallbackLat = 37.7749;
   static const _fallbackLon = -122.4194;
 
-  Future<({double lat, double lon})> currentPosition() async {
+  Future<LocationResult> currentPosition() async {
     try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return _fallback();
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        return _fallback(LocationFailReason.serviceDisabled);
+      }
 
-      LocationPermission permission = await Geolocator.checkPermission();
+      var permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        return _fallback();
+      if (permission == LocationPermission.deniedForever) {
+        return _fallback(LocationFailReason.permissionDeniedForever);
+      }
+      if (permission == LocationPermission.denied) {
+        return _fallback(LocationFailReason.permissionDenied);
       }
 
       final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.low, // low accuracy is sufficient for weather
+          accuracy: LocationAccuracy.low,
           timeLimit: Duration(seconds: 15),
         ),
       );
-      return (lat: pos.latitude, lon: pos.longitude);
-    } catch (_) {
-      return _fallback();
+      return LocationResult(lat: pos.latitude, lon: pos.longitude);
+    } on PermissionDefinitionsNotFoundException catch (_) {
+      return _fallback(LocationFailReason.error);
+    } catch (e) {
+      final isTimeout = e.toString().toLowerCase().contains('timeout') ||
+                        e.toString().toLowerCase().contains('timedout');
+      return _fallback(isTimeout ? LocationFailReason.timeout : LocationFailReason.error);
     }
   }
 
-  ({double lat, double lon}) _fallback() =>
-      (lat: _fallbackLat, lon: _fallbackLon);
+  LocationResult _fallback(LocationFailReason reason) =>
+      LocationResult(lat: _fallbackLat, lon: _fallbackLon, failReason: reason);
 }
 
 final locationServiceProvider = Provider((_) => LocationService());

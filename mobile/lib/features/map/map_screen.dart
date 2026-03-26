@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../core/services/location_service.dart';
 import '../forecast/forecast_provider.dart';
 import 'heatmap_painter.dart';
 
-final _mapLocationProvider =
-    FutureProvider<({double lat, double lon})>((ref) async {
+final _mapLocationProvider = FutureProvider<LocationResult>((ref) async {
   return ref.read(locationServiceProvider).currentPosition();
 });
 
@@ -25,64 +25,125 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   Widget build(BuildContext context) {
     final forecast = ref.watch(forecastProvider);
-    final location = ref.watch(_mapLocationProvider);
+    final locationAsync = ref.watch(_mapLocationProvider);
 
-    // Show spinner while waiting for GPS
-    if (!location.hasValue) {
+    if (!locationAsync.hasValue) {
       return Scaffold(
         appBar: AppBar(title: const Text('Probabilistic Heatmap')),
-        body: const Center(child: CircularProgressIndicator()),
+        body: const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 12),
+              Text('Waiting for GPS…'),
+            ],
+          ),
+        ),
       );
     }
 
-    final lat = location.value!.lat;
-    final lon = location.value!.lon;
+    final loc = locationAsync.value!;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Probabilistic Heatmap'),
         actions: [
+          if (!loc.isFallback)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Chip(
+                label: Text(
+                  '${loc.lat.toStringAsFixed(3)}, ${loc.lon.toStringAsFixed(3)}',
+                  style: const TextStyle(fontSize: 10),
+                ),
+                backgroundColor: Colors.green.shade900,
+                side: BorderSide.none,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.my_location),
             tooltip: 'Re-centre',
-            onPressed: () => _mapController.move(LatLng(lat, lon), 9),
+            onPressed: () => _mapController.move(LatLng(loc.lat, loc.lon), 9),
           ),
         ],
       ),
-      body: Stack(
+      body: Column(
         children: [
-          // FlutterMap is only built after location resolves, so
-          // initialCenter is always the real GPS position.
-          FlutterMap(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: LatLng(lat, lon),
-              initialZoom: 9,
-              minZoom: 5,
-              maxZoom: 15,
-            ),
-            children: [
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.example.bayesian_weather',
-              ),
-              forecast.when(
-                data: (result) => HeatmapLayer(
-                  centerLat: lat,
-                  centerLon: lon,
-                  posteriorMean: result.temperatureC,
-                  posteriorStd: result.temperatureStd,
+          if (loc.isFallback) _LocationWarningBanner(loc: loc, onRetry: () => ref.invalidate(_mapLocationProvider)),
+          Expanded(
+            child: Stack(
+              children: [
+                FlutterMap(
+                  mapController: _mapController,
+                  options: MapOptions(
+                    initialCenter: LatLng(loc.lat, loc.lon),
+                    initialZoom: 9,
+                    minZoom: 5,
+                    maxZoom: 15,
+                  ),
+                  children: [
+                    TileLayer(
+                      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      userAgentPackageName: 'com.example.bayesian_weather',
+                    ),
+                    forecast.when(
+                      data: (result) => HeatmapLayer(
+                        centerLat: loc.lat,
+                        centerLon: loc.lon,
+                        posteriorMean: result.temperatureC,
+                        posteriorStd: result.temperatureStd,
+                      ),
+                      loading: () => const SizedBox.shrink(),
+                      error: (_, __) => const SizedBox.shrink(),
+                    ),
+                  ],
                 ),
-                loading: () => const SizedBox.shrink(),
-                error: (_, __) => const SizedBox.shrink(),
-              ),
-            ],
+                Positioned(
+                  bottom: 16,
+                  left: 16,
+                  child: _Legend(),
+                ),
+              ],
+            ),
           ),
-          Positioned(
-            bottom: 16,
-            left: 16,
-            child: _Legend(),
+        ],
+      ),
+    );
+  }
+}
+
+class _LocationWarningBanner extends StatelessWidget {
+  final LocationResult loc;
+  final VoidCallback onRetry;
+  const _LocationWarningBanner({required this.loc, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.orange.shade900,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(
+        children: [
+          const Icon(Icons.location_off, size: 16, color: Colors.white),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              loc.failMessage,
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+            ),
           ),
+          if (loc.canOpenSettings)
+            TextButton(
+              onPressed: () => Geolocator.openAppSettings(),
+              child: const Text('Settings', style: TextStyle(color: Colors.white, fontSize: 12)),
+            )
+          else
+            TextButton(
+              onPressed: onRetry,
+              child: const Text('Retry', style: TextStyle(color: Colors.white, fontSize: 12)),
+            ),
         ],
       ),
     );
@@ -110,11 +171,7 @@ class _Legend extends StatelessWidget {
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(4),
                   gradient: const LinearGradient(
-                    colors: [
-                      Color(0xFF2196F3),
-                      Color(0xFFFFEB3B),
-                      Color(0xFFF44336)
-                    ],
+                    colors: [Color(0xFF2196F3), Color(0xFFFFEB3B), Color(0xFFF44336)],
                   ),
                 ),
               ),

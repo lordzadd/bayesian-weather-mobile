@@ -35,7 +35,8 @@ class ForecastNotifier extends AsyncNotifier<ForecastResult> {
   Future<ForecastResult> _fetchForecast() async {
     final settings = ref.read(settingsProvider);
 
-    final (:lat, :lon) = await _location.currentPosition();
+    final pos = await _location.currentPosition();
+    final (lat, lon) = (pos.lat, pos.lon);
     final spatial = [lat / 90.0, lon / 180.0];
 
     final data = await _weather.fetch(lat, lon);
