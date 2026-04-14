@@ -9,6 +9,7 @@ import '../../core/services/observation_buffer_service.dart';
 import '../../core/services/open_meteo_service.dart';
 import '../../inference/bma_engine.dart';
 import '../../inference/linear_dart_engine.dart';
+import '../../inference/fusion_dart_engine.dart';
 import '../../inference/lstm_dart_engine.dart';
 import '../settings/settings_provider.dart';
 
@@ -80,6 +81,16 @@ class ValidationNotifier extends AsyncNotifier<ValidationState> {
 
       final ForecastResult result;
       switch (modelVariant) {
+        case ModelVariant.fusion:
+          await FusionDartEngine.instance.load();
+          ObservationBufferService.instance.push(lat, lon, [...pair.obsT1hr, ...spatial]);
+          final fusionSeq = ObservationBufferService.instance.getSequence(lat, lon);
+          final obsHist = fusionSeq.map((step) => step.sublist(0, 6)).toList();
+          result = FusionDartEngine.instance.infer(
+            obsHistory: obsHist,
+            gfsForecast: pair.gfsT0,
+            spatialEmbed: spatial,
+          );
         case ModelVariant.linear:
           result = LinearDartEngine.instance.infer(
             gfsForecast: pair.gfsT0,
@@ -89,7 +100,7 @@ class ValidationNotifier extends AsyncNotifier<ValidationState> {
         case ModelVariant.lstm:
           ObservationBufferService.instance.push(lat, lon, [...pair.obsT1hr, ...spatial]);
           final sequence = ObservationBufferService.instance.getSequence(lat, lon);
-          result = await LstmDartEngine.instance.infer(sequence: sequence);
+          result = LstmDartEngine.instance.infer(sequence: sequence);
         case ModelVariant.bma:
           result = await BmaEngine.instance.infer(
             gfsForecast: pair.gfsT0,
