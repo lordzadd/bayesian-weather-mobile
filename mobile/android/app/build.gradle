@@ -10,6 +10,7 @@ android {
     ndkVersion "26.1.10909125"
 
     compileOptions {
+        coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
@@ -60,7 +61,7 @@ android {
 dependencies {
     // ExecuTorch Android AAR (place in android/app/libs/ after downloading)
     // implementation(name: "executorch", ext: "aar")
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"
 }
 
 flutter {

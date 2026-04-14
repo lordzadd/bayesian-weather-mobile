@@ -5,6 +5,7 @@ import 'core/services/database_service.dart';
 import 'core/services/notification_service.dart';
 import 'inference/bma_engine.dart';
 import 'inference/linear_dart_engine.dart';
+import 'inference/fusion_dart_engine.dart';
 import 'inference/lstm_dart_engine.dart';
 import 'features/benchmark/benchmark_screen.dart';
 import 'features/forecast/forecast_screen.dart';
@@ -22,6 +23,7 @@ void main() async {
   await Future.wait([
     LinearDartEngine.instance.load(),
     LstmDartEngine.instance.load(),
+    FusionDartEngine.instance.load(),
   ]);
   runApp(const ProviderScope(child: WeatherApp()));
 }

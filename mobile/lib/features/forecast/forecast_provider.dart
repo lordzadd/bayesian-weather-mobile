@@ -10,6 +10,7 @@ import '../../core/services/open_meteo_service.dart';
 import '../../inference/bma_engine.dart';
 import '../../inference/forecast_cache_service.dart';
 import '../../inference/linear_dart_engine.dart';
+import '../../inference/fusion_dart_engine.dart';
 import '../../inference/lstm_dart_engine.dart';
 import '../locations/saved_locations_provider.dart';
 import '../settings/settings_provider.dart';
@@ -71,10 +72,23 @@ class ForecastNotifier extends AsyncNotifier<ForecastResult> {
           spatialEmbed: spatial,
         );
 
+      case ModelVariant.fusion:
+        await FusionDartEngine.instance.load();
+        // Build observation history from the buffer (raw obs values)
+        ObservationBufferService.instance.push(lat, lon, [...(obsFeatures ?? gfsForecast), ...spatial]);
+        final fusionSeq = ObservationBufferService.instance.getSequence(lat, lon);
+        // Extract just the 6 weather vars from each buffered step (drop spatial)
+        final obsHist = fusionSeq.map((step) => step.sublist(0, 6)).toList();
+        result = FusionDartEngine.instance.infer(
+          obsHistory: obsHist,
+          gfsForecast: gfsForecast,
+          spatialEmbed: spatial,
+        );
+
       case ModelVariant.lstm:
         ObservationBufferService.instance.push(lat, lon, [...gfsForecast, ...spatial]);
         final sequence = ObservationBufferService.instance.getSequence(lat, lon);
-        result = await LstmDartEngine.instance.infer(sequence: sequence);
+        result = LstmDartEngine.instance.infer(sequence: sequence);
 
       case ModelVariant.bma:
         if (settings.variant == InferenceVariant.gpuAlways) {

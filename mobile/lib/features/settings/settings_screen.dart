@@ -52,6 +52,16 @@ class SettingsScreen extends ConsumerWidget {
             child: Column(
               children: [
                 RadioListTile<ModelVariant>(
+                  title: const Text('Fusion — LSTM + BayCal (best)'),
+                  subtitle: const Text('39.5% over GFS, calibrated uncertainty'),
+                  value: ModelVariant.fusion,
+                  groupValue: settings.modelVariant,
+                  onChanged: (v) {
+                    notifier.setModelVariant(v!);
+                    ref.read(forecastProvider.notifier).refresh();
+                  },
+                ),
+                RadioListTile<ModelVariant>(
                   title: const Text('BMA — Bayesian Model Averaging'),
                   subtitle: const Text('SVI with heteroscedastic noise net'),
                   value: ModelVariant.bma,

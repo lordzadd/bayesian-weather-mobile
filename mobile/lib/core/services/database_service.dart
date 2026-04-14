@@ -16,7 +16,7 @@ class DatabaseService {
   static final DatabaseService instance = DatabaseService._();
 
   static const _dbName = 'bayesian_weather.db';
-  static const _dbVersion = 3;
+  static const _dbVersion = 4;
 
   Database? _db;
 
@@ -70,11 +70,19 @@ class DatabaseService {
     if (oldVersion < 3) {
       await _createSavedLocationsTable(db);
     }
+    if (oldVersion < 4) {
+      // Repair: version 2 from the old branch created prediction_history
+      // instead of forecast_history + lookback_accuracy. Create any
+      // missing tables idempotently.
+      await _createHistoryTable(db);
+      await _createLookbackTable(db);
+      await _createSavedLocationsTable(db);
+    }
   }
 
   Future<void> _createHistoryTable(Database db) async {
     await db.execute('''
-      CREATE TABLE forecast_history (
+      CREATE TABLE IF NOT EXISTS forecast_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp INTEGER NOT NULL,
         lat REAL NOT NULL,
@@ -91,12 +99,12 @@ class DatabaseService {
       )
     ''');
     await db.execute(
-        'CREATE INDEX idx_history_ts ON forecast_history(timestamp DESC)');
+        'CREATE INDEX IF NOT EXISTS idx_history_ts ON forecast_history(timestamp DESC)');
   }
 
   Future<void> _createLookbackTable(Database db) async {
     await db.execute('''
-      CREATE TABLE lookback_accuracy (
+      CREATE TABLE IF NOT EXISTS lookback_accuracy (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp INTEGER NOT NULL,
         lat REAL NOT NULL,
@@ -284,7 +292,7 @@ class DatabaseService {
 
   Future<void> _createSavedLocationsTable(Database db) async {
     await db.execute('''
-      CREATE TABLE saved_locations (
+      CREATE TABLE IF NOT EXISTS saved_locations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         lat REAL NOT NULL,

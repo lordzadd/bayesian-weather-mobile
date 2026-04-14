@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 enum InferenceVariant { gpuAlways, cacheOptimized }
 
 /// Which neural architecture to use for bias correction.
-enum ModelVariant { bma, linear, lstm }
+enum ModelVariant { bma, linear, lstm, fusion }
 
 class AppSettings {
   final InferenceVariant variant;
@@ -15,7 +15,7 @@ class AppSettings {
 
   const AppSettings({
     this.variant = InferenceVariant.cacheOptimized,
-    this.modelVariant = ModelVariant.bma,
+    this.modelVariant = ModelVariant.fusion,
     this.tempThresholdC = 0.2,
     this.windThresholdMs = 0.5,
     this.notificationsEnabled = false,
