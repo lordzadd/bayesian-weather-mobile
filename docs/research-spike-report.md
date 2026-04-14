@@ -378,3 +378,6 @@ python run_spike_v2.py          # v2 with distillation (~45 min on CPU)
 4. **Aviation products:** Implement flight category probability computation from the per-horizon uncertainty distributions
 5. **Spatial extension:** Investigate multi-station prediction using the existing 26-station training data with spatial features
 6. **Ensemble training:** Train multiple student LSTMs with different seeds (as the existing project does with BMA ensembles) for additional robustness
+
+
+Note AI was used for formating, and writing the report.
