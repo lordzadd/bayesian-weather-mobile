@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models/forecast_result.dart';
+import '../../core/services/connectivity_service.dart';
+import '../../shared/widgets/wind_arrow.dart';
+import '../locations/saved_locations_provider.dart';
 import 'forecast_provider.dart';
-import 'widgets/accuracy_card.dart';
 
 class ForecastScreen extends ConsumerWidget {
   const ForecastScreen({super.key});
@@ -26,10 +28,104 @@ class ForecastScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: state.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _ErrorView(error: e.toString()),
-        data: (result) => _ForecastBody(result: result),
+      body: Column(
+        children: [
+          _OfflineBanner(),
+          _LocationChipBar(),
+          Expanded(
+            child: state.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => _ErrorView(error: e.toString()),
+              data: (result) => _ForecastBody(result: result),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OfflineBanner extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final connectivity = ref.watch(connectivityProvider);
+    final isOffline = connectivity.whenOrNull(data: (v) => !v) ?? false;
+    if (!isOffline) return const SizedBox.shrink();
+    return Container(
+      color: Colors.orange.shade900,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: const Row(
+        children: [
+          Icon(Icons.wifi_off, size: 14, color: Colors.white),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Offline — showing last cached forecast',
+              style: TextStyle(color: Colors.white, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LocationChipBar extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final saved    = ref.watch(savedLocationsProvider);
+    final selected = ref.watch(selectedLocationProvider);
+
+    final locations = saved.valueOrNull ?? [];
+    if (locations.isEmpty) return const SizedBox.shrink();
+
+    return SizedBox(
+      height: 40,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        children: [
+          // "GPS" chip to clear any override
+          ActionChip(
+            label: const Text('GPS'),
+            avatar: Icon(
+              Icons.my_location,
+              size: 14,
+              color: selected == null
+                  ? Theme.of(context).colorScheme.onPrimary
+                  : null,
+            ),
+            backgroundColor: selected == null
+                ? Theme.of(context).colorScheme.primary
+                : null,
+            labelStyle: selected == null
+                ? TextStyle(color: Theme.of(context).colorScheme.onPrimary)
+                : null,
+            onPressed: () {
+              ref.read(selectedLocationProvider.notifier).state = null;
+              ref.read(forecastProvider.notifier).refresh();
+            },
+          ),
+          ...locations.map((loc) {
+            final isSelected = selected?.id == loc.id;
+            return Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: ActionChip(
+                label: Text(loc.name),
+                backgroundColor: isSelected
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+                labelStyle: isSelected
+                    ? TextStyle(color: Theme.of(context).colorScheme.onPrimary)
+                    : null,
+                onPressed: () {
+                  ref.read(selectedLocationProvider.notifier).state = loc;
+                  ref.read(forecastProvider.notifier).refresh();
+                },
+              ),
+            );
+          }),
+        ],
       ),
     );
   }
@@ -47,11 +143,11 @@ class _ForecastBody extends StatelessWidget {
       children: [
         _PrimaryCard(result: result),
         const SizedBox(height: 12),
+        _WindCard(result: result),
+        const SizedBox(height: 12),
         _DetailGrid(result: result),
         const SizedBox(height: 12),
         _UncertaintyCard(result: result),
-        const SizedBox(height: 12),
-        const AccuracyCard(),
         const SizedBox(height: 12),
         Text(
           'Updated ${_formatTime(result.computedAt)}',
@@ -97,6 +193,52 @@ class _PrimaryCard extends StatelessWidget {
   }
 }
 
+class _WindCard extends StatelessWidget {
+  final ForecastResult result;
+  const _WindCard({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+        child: Row(
+          children: [
+            WindArrow(
+              bearingDeg: result.windBearingDeg,
+              speedMs: result.windSpeedMs,
+              speedStd: result.windSpeedStd,
+            ),
+            const SizedBox(width: 24),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Wind', style: Theme.of(context).textTheme.labelLarge),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${result.windSpeedMs.toStringAsFixed(1)} m/s  '
+                    '± ${result.windSpeedStd.toStringAsFixed(1)} m/s',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  Text(
+                    'From ${result.windBearingDeg.toStringAsFixed(0)}°  '
+                    '${result.windCompassPoint}',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _DetailGrid extends StatelessWidget {
   final ForecastResult result;
   const _DetailGrid({required this.result});
@@ -111,7 +253,6 @@ class _DetailGrid extends StatelessWidget {
       crossAxisSpacing: 8,
       mainAxisSpacing: 8,
       children: [
-        _Tile(label: 'Wind', value: '${result.windSpeedMs.toStringAsFixed(1)} m/s', icon: Icons.air),
         _Tile(label: 'Pressure', value: '${result.surfacePressureHpa.toStringAsFixed(0)} hPa', icon: Icons.compress),
         _Tile(label: 'Humidity', value: '${result.relativeHumidityPct.toStringAsFixed(0)}%', icon: Icons.water_drop),
         _Tile(label: 'Precip', value: '${result.precipitationMm.toStringAsFixed(1)} mm', icon: Icons.umbrella),

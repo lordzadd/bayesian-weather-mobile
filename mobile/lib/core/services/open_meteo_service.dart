@@ -86,12 +86,16 @@ class OpenMeteoService {
     }
   }
 
-  /// Fetches historical GFS data from [hoursAgo] and current observation.
+  /// Fetches a lookback pair for accuracy validation.
   ///
-  /// Used by the lookback validation service: GFS data at T-[hoursAgo] is the
-  /// prior, and `current` conditions are the ground truth to compare against.
-  Future<({List<double> gfs, List<double> obs, DateTime targetTime})?> fetchForLookback(
-      double lat, double lon, {int hoursAgo = 1}) async {
+  /// Returns:
+  ///   [gfsT0]    — GFS hourly slot at the current hour (what model uses as prior)
+  ///   [obsT1hr]  — ERA5/hourly slot 1 hour ago (observation available at T-1hr)
+  ///   [era5Now]  — current ERA5 analysis (ground truth at T-0)
+  ///
+  /// Simulates: "Given observation at T-1hr, predict T-0 → compare against actual T-0."
+  Future<({List<double> gfsT0, List<double> obsT1hr, List<double> era5Now})?> fetchLookbackPair(
+      double lat, double lon) async {
     try {
       final resp = await _dio.get(_url, queryParameters: {
         'latitude': lat,
@@ -101,15 +105,15 @@ class OpenMeteoService {
         'wind_speed_unit': 'ms',
         'timezone': 'UTC',
         'forecast_days': 1,
-        'past_hours': hoursAgo + 1,
+        'past_hours': 2,
         'models': 'gfs_seamless',
       });
 
       final current = resp.data['current'] as Map<String, dynamic>;
       final hourly = resp.data['hourly'] as Map<String, dynamic>;
 
-      // Current conditions = ground truth observation
-      final obs = _toFeatureVector(
+      // Ground truth: current ERA5 analysis
+      final era5Now = _toFeatureVector(
         tempC: (current['temperature_2m'] as num).toDouble(),
         pressHpa: (current['surface_pressure'] as num).toDouble(),
         windMs: (current['wind_speed_10m'] as num).toDouble(),
@@ -118,31 +122,36 @@ class OpenMeteoService {
         rhPct: (current['relative_humidity_2m'] as num).toDouble(),
       );
 
-      // Find the hourly slot for T - hoursAgo
       final currentTime = current['time'] as String;
       final currentHour = currentTime.length >= 13
           ? '${currentTime.substring(0, 13)}:00'
           : currentTime;
       final times = hourly['time'] as List;
       int idx = times.indexOf(currentHour);
-      if (idx < 0) idx = hoursAgo;
-      final pastIdx = (idx - hoursAgo).clamp(0, times.length - 1);
+      if (idx < 0) idx = times.length - 1;
 
-      final gfs = _toFeatureVector(
-        tempC: (hourly['temperature_2m'][pastIdx] as num).toDouble(),
-        pressHpa: (hourly['surface_pressure'][pastIdx] as num).toDouble(),
-        windMs: (hourly['wind_speed_10m'][pastIdx] as num).toDouble(),
-        windDeg: (hourly['wind_direction_10m'][pastIdx] as num).toDouble(),
-        precipMm: (hourly['precipitation'][pastIdx] as num).toDouble(),
-        rhPct: (hourly['relative_humidity_2m'][pastIdx] as num).toDouble(),
-      );
+      // T-0 GFS slot: the model's prior for the current hour
+      final gfsT0 = _slotVector(hourly, idx);
 
-      final targetTime = DateTime.parse(times[pastIdx] as String);
+      // T-1hr observation: what was observed an hour ago
+      final prevIdx = (idx - 1).clamp(0, times.length - 1);
+      final obsT1hr = _slotVector(hourly, prevIdx);
 
-      return (gfs: gfs, obs: obs, targetTime: targetTime);
+      return (gfsT0: gfsT0, obsT1hr: obsT1hr, era5Now: era5Now);
     } catch (_) {
       return null;
     }
+  }
+
+  List<double> _slotVector(Map<String, dynamic> hourly, int idx) {
+    return _toFeatureVector(
+      tempC: (hourly['temperature_2m'][idx] as num).toDouble(),
+      pressHpa: (hourly['surface_pressure'][idx] as num).toDouble(),
+      windMs: (hourly['wind_speed_10m'][idx] as num).toDouble(),
+      windDeg: (hourly['wind_direction_10m'][idx] as num).toDouble(),
+      precipMm: (hourly['precipitation'][idx] as num).toDouble(),
+      rhPct: (hourly['relative_humidity_2m'][idx] as num).toDouble(),
+    );
   }
 
   // Decomposes wind speed+direction into (u, v) components —

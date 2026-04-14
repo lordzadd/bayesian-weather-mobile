@@ -13,6 +13,8 @@ class ForecastResult {
   final double temperatureStd;
   final double windSpeedMs;
   final double windSpeedStd;
+  /// Meteorological bearing: direction wind is coming FROM, 0–360° clockwise from North.
+  final double windBearingDeg;
   final double surfacePressureHpa;
   final double relativeHumidityPct;
   final double precipitationMm;
@@ -24,6 +26,7 @@ class ForecastResult {
     required this.temperatureStd,
     required this.windSpeedMs,
     required this.windSpeedStd,
+    this.windBearingDeg = 0.0,
     required this.surfacePressureHpa,
     required this.relativeHumidityPct,
     required this.precipitationMm,
@@ -41,11 +44,22 @@ class ForecastResult {
   /// 95% confidence interval half-width (2σ)
   double get tempConfidenceInterval => temperatureStd * 2;
 
+  /// 16-point compass abbreviation for the wind bearing (e.g. "SW", "NNE").
+  String get windCompassPoint {
+    const points = [
+      'N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
+      'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW',
+    ];
+    final idx = ((windBearingDeg + 11.25) / 22.5).floor() % 16;
+    return points[idx];
+  }
+
   ForecastResult copyWith({
     double? temperatureC,
     double? temperatureStd,
     double? windSpeedMs,
     double? windSpeedStd,
+    double? windBearingDeg,
     double? surfacePressureHpa,
     double? relativeHumidityPct,
     double? precipitationMm,
@@ -57,6 +71,7 @@ class ForecastResult {
       temperatureStd: temperatureStd ?? this.temperatureStd,
       windSpeedMs: windSpeedMs ?? this.windSpeedMs,
       windSpeedStd: windSpeedStd ?? this.windSpeedStd,
+      windBearingDeg: windBearingDeg ?? this.windBearingDeg,
       surfacePressureHpa: surfacePressureHpa ?? this.surfacePressureHpa,
       relativeHumidityPct: relativeHumidityPct ?? this.relativeHumidityPct,
       precipitationMm: precipitationMm ?? this.precipitationMm,
