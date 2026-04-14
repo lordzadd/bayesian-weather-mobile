@@ -23,10 +23,11 @@ from pyro.optim import Adam
 
 
 class BMAModel(PyroModule):
-    def __init__(self, n_features: int = 6, hidden_dim: int = 64):
+    def __init__(self, n_features: int = 6, hidden_dim: int = 64, n_temporal: int = 4):
         super().__init__()
         self.n_features = n_features
-        inp = n_features + 2  # gfs features + lat + lon
+        self.n_temporal = n_temporal
+        inp = n_features + 2 + n_temporal  # gfs features + lat/lon + sin/cos time
 
         self.bias_net = PyroModule[nn.Sequential](
             nn.Linear(inp, hidden_dim),
@@ -43,8 +44,15 @@ class BMAModel(PyroModule):
             nn.Softplus(),
         )
 
-    def _encode(self, gfs: torch.Tensor, spatial: torch.Tensor):
-        x = torch.cat([gfs, spatial], dim=-1)
+    def _encode(self, gfs: torch.Tensor, spatial: torch.Tensor,
+                 temporal: "torch.Tensor | None" = None):
+        parts = [gfs, spatial]
+        if temporal is not None:
+            parts.append(temporal)
+        else:
+            # Zero-pad temporal features if not provided (backwards compat)
+            parts.append(torch.zeros(gfs.shape[0], self.n_temporal, device=gfs.device))
+        x = torch.cat(parts, dim=-1)
         mu    = gfs + self.bias_net(x)
         sigma = self.noise_net(x) + 1e-6
         return mu, sigma
@@ -54,9 +62,10 @@ class BMAModel(PyroModule):
         gfs: torch.Tensor,
         spatial: torch.Tensor,
         obs: "torch.Tensor | None" = None,
+        temporal: "torch.Tensor | None" = None,
     ) -> torch.Tensor:
         batch = gfs.shape[0]
-        mu, sigma = self._encode(gfs, spatial)
+        mu, sigma = self._encode(gfs, spatial, temporal)
         with pyro.plate("data", batch):
             return pyro.sample(
                 "theta",
@@ -69,9 +78,10 @@ class BMAModel(PyroModule):
         gfs: torch.Tensor,
         spatial: torch.Tensor,
         obs: "torch.Tensor | None" = None,
+        temporal: "torch.Tensor | None" = None,
     ):
         batch = gfs.shape[0]
-        mu, sigma = self._encode(gfs, spatial)
+        mu, sigma = self._encode(gfs, spatial, temporal)
         with pyro.plate("data", batch):
             pyro.sample("theta", dist.Normal(mu, sigma).to_event(1))
 
@@ -79,9 +89,10 @@ class BMAModel(PyroModule):
         self,
         gfs: torch.Tensor,
         spatial: torch.Tensor,
+        temporal: "torch.Tensor | None" = None,
     ) -> "tuple[torch.Tensor, torch.Tensor]":
         """Returns (posterior_mean, posterior_std) — exported to on-device."""
-        mu, sigma = self._encode(gfs, spatial)
+        mu, sigma = self._encode(gfs, spatial, temporal)
         return mu, sigma
 
 

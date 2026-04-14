@@ -27,6 +27,7 @@ RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 
 STATIONS = [
+    # --- Original 10 major airports ---
     {"id": "KSFO", "lat": 37.619, "lon": -122.375},
     {"id": "KLAX", "lat": 33.942, "lon": -118.408},
     {"id": "KORD", "lat": 41.978, "lon":  -87.904},
@@ -37,9 +38,50 @@ STATIONS = [
     {"id": "KSEA", "lat": 47.449, "lon": -122.309},
     {"id": "KBOS", "lat": 42.364, "lon":  -71.005},
     {"id": "KMIA", "lat": 25.796, "lon":  -80.287},
+    # --- 40 additional CONUS stations for geographic diversity ---
+    {"id": "KPHX", "lat": 33.435, "lon": -112.007},  # Phoenix
+    {"id": "KLAS", "lat": 36.080, "lon": -115.152},  # Las Vegas
+    {"id": "KMSP", "lat": 44.883, "lon":  -93.229},  # Minneapolis
+    {"id": "KDTW", "lat": 42.212, "lon":  -83.353},  # Detroit
+    {"id": "KIAH", "lat": 29.984, "lon":  -95.341},  # Houston
+    {"id": "KMCO", "lat": 28.429, "lon":  -81.309},  # Orlando
+    {"id": "KPHL", "lat": 39.872, "lon":  -75.241},  # Philadelphia
+    {"id": "KCLT", "lat": 35.214, "lon":  -80.943},  # Charlotte
+    {"id": "KSLC", "lat": 40.789, "lon": -111.977},  # Salt Lake City
+    {"id": "KPDX", "lat": 45.589, "lon": -122.597},  # Portland OR
+    {"id": "KSTL", "lat": 38.749, "lon":  -90.370},  # St. Louis
+    {"id": "KBNA", "lat": 36.126, "lon":  -86.681},  # Nashville
+    {"id": "KMKE", "lat": 42.947, "lon":  -87.897},  # Milwaukee
+    {"id": "KPIT", "lat": 40.492, "lon":  -80.233},  # Pittsburgh
+    {"id": "KIND", "lat": 39.717, "lon":  -86.294},  # Indianapolis
+    {"id": "KCVG", "lat": 39.048, "lon":  -84.667},  # Cincinnati
+    {"id": "KMCI", "lat": 39.298, "lon":  -94.714},  # Kansas City
+    {"id": "KAUS", "lat": 30.194, "lon":  -97.670},  # Austin
+    {"id": "KSAN", "lat": 32.734, "lon": -117.190},  # San Diego
+    {"id": "KSJC", "lat": 37.362, "lon": -121.929},  # San Jose
+    {"id": "KRDU", "lat": 35.878, "lon":  -78.787},  # Raleigh-Durham
+    {"id": "KCLE", "lat": 41.411, "lon":  -81.849},  # Cleveland
+    {"id": "KABQ", "lat": 35.040, "lon": -106.609},  # Albuquerque
+    {"id": "KTUL", "lat": 36.198, "lon":  -95.888},  # Tulsa
+    {"id": "KOMA", "lat": 41.302, "lon":  -95.894},  # Omaha
+    {"id": "KBOI", "lat": 43.564, "lon": -116.223},  # Boise
+    {"id": "KBUF", "lat": 42.941, "lon":  -78.736},  # Buffalo
+    {"id": "KPWM", "lat": 43.646, "lon":  -70.309},  # Portland ME
+    {"id": "KJAX", "lat": 30.494, "lon":  -81.688},  # Jacksonville
+    {"id": "KMSN", "lat": 43.140, "lon":  -89.337},  # Madison
+    {"id": "KFAR", "lat": 46.921, "lon":  -96.816},  # Fargo (northern plains)
+    {"id": "KRAP", "lat": 44.045, "lon": -103.054},  # Rapid City (plains)
+    {"id": "KBIL", "lat": 45.808, "lon": -108.543},  # Billings (mountain)
+    {"id": "KLIT", "lat": 34.729, "lon":  -92.224},  # Little Rock
+    {"id": "KJAN", "lat": 32.311, "lon":  -90.076},  # Jackson MS
+    {"id": "KELP", "lat": 31.807, "lon": -106.378},  # El Paso (desert)
+    {"id": "KFAT", "lat": 36.776, "lon": -119.718},  # Fresno (central valley)
+    {"id": "KGRR", "lat": 42.881, "lon":  -85.523},  # Grand Rapids
+    {"id": "KDSM", "lat": 41.534, "lon":  -93.663},  # Des Moines
+    {"id": "KSAT", "lat": 29.534, "lon":  -98.470},  # San Antonio
 ]
 
-START_DATE = "2023-03-01"
+START_DATE = "2021-03-01"
 END_DATE   = "2025-03-01"
 
 HOURLY_VARS = [
@@ -91,6 +133,15 @@ def fetch_model(station: dict, model: str, prefix: str) -> pd.DataFrame:
     df["station"] = station["id"]
     df["lat"]     = station["lat"]
     df["lon"]     = station["lon"]
+
+    # Temporal features — cyclic encoding of hour-of-day and day-of-year
+    hours = df["time"].dt.hour + df["time"].dt.minute / 60.0
+    doy = df["time"].dt.dayofyear
+    df["sin_hour"] = (hours * 2 * math.pi / 24).apply(math.sin)
+    df["cos_hour"] = (hours * 2 * math.pi / 24).apply(math.cos)
+    df["sin_doy"]  = (doy * 2 * math.pi / 365.25).apply(math.sin)
+    df["cos_doy"]  = (doy * 2 * math.pi / 365.25).apply(math.cos)
+
     return df
 
 

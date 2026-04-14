@@ -2,10 +2,16 @@
 Joins GFS proxy + METAR observations on (station, time), cleans, and
 saves aligned tensors for training.
 
+Split strategy: TEMPORAL — train on 2021-01-01 to 2024-06-30,
+validate on 2024-07-01 to 2025-03-01. This prevents future leakage
+and tests generalization to unseen time periods.
+
+Normalization stats are computed ONLY on the training split.
+
 Output:
-  ml/data/processed/train.pt   — 80% split
-  ml/data/processed/val.pt     — 20% split
-  ml/data/processed/stats.pt   — normalization mean/std per feature
+  ml/data/processed/train.pt   — temporal train split
+  ml/data/processed/val.pt     — temporal val split (future holdout)
+  ml/data/processed/stats.pt   — normalization mean/std (from train only)
 """
 
 import torch
@@ -20,6 +26,10 @@ PROC_DIR.mkdir(parents=True, exist_ok=True)
 GFS_FEATURES = ["gfs_temp_c","gfs_pres_hpa","gfs_u_ms","gfs_v_ms","gfs_precip_mm","gfs_rh_pct"]
 OBS_FEATURES = ["obs_temp_c","obs_pres_hpa","obs_u_ms","obs_v_ms","obs_precip_mm","obs_rh_pct"]
 SPATIAL_FEATURES = ["lat_norm", "lon_norm"]
+TEMPORAL_FEATURES = ["sin_hour", "cos_hour", "sin_doy", "cos_doy"]
+
+# Temporal split boundary — everything before is train, after is val
+VAL_START = pd.Timestamp("2024-07-01")
 
 
 def load_and_join() -> pd.DataFrame:
@@ -52,6 +62,16 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     df["lat_norm"] = df["lat"] / 90.0
     df["lon_norm"] = df["lon"] / 180.0
 
+    # Temporal features — compute from timestamp if not already present
+    if "sin_hour" not in df.columns:
+        import math
+        hours = df["time"].dt.hour + df["time"].dt.minute / 60.0
+        doy = df["time"].dt.dayofyear
+        df["sin_hour"] = (hours * 2 * np.pi / 24).apply(math.sin)
+        df["cos_hour"] = (hours * 2 * np.pi / 24).apply(math.cos)
+        df["sin_doy"]  = (doy * 2 * np.pi / 365.25).apply(math.sin)
+        df["cos_doy"]  = (doy * 2 * np.pi / 365.25).apply(math.cos)
+
     print(f"After cleaning: {len(df)} rows")
     return df.reset_index(drop=True)
 
@@ -74,10 +94,13 @@ def build_tensors(df: pd.DataFrame, stats: dict):
     X_gfs     = normalize(df, stats, GFS_FEATURES)
     X_obs     = normalize(df, stats, OBS_FEATURES)
     X_spatial = df[SPATIAL_FEATURES].values.astype(np.float32)
+    # Temporal features are already in [-1, 1] (sin/cos), no normalization needed
+    X_temporal = df[TEMPORAL_FEATURES].values.astype(np.float32)
 
     return (
         torch.from_numpy(X_gfs),
         torch.from_numpy(X_spatial),
+        torch.from_numpy(X_temporal),
         torch.from_numpy(X_obs),
     )
 
@@ -86,28 +109,30 @@ def main():
     df = load_and_join()
     df = clean(df)
 
-    # Compute normalization stats on full dataset before splitting
-    stats = compute_stats(df)
-    torch.save(stats, PROC_DIR / "stats.pt")
-    print("Saved normalization stats")
+    # Temporal split — no future leakage
+    train_df = df[df["time"] < VAL_START].reset_index(drop=True)
+    val_df   = df[df["time"] >= VAL_START].reset_index(drop=True)
 
-    # Shuffle and split 80/20
-    df = df.sample(frac=1, random_state=42).reset_index(drop=True)
-    n_train = int(0.8 * len(df))
-    train_df = df.iloc[:n_train]
-    val_df   = df.iloc[n_train:]
+    print(f"\nTemporal split at {VAL_START.date()}:")
+    print(f"  Train: {len(train_df)} samples ({train_df['time'].min().date()} → {train_df['time'].max().date()})")
+    print(f"  Val:   {len(val_df)} samples ({val_df['time'].min().date()} → {val_df['time'].max().date()})")
+
+    # Compute normalization stats on TRAINING data only
+    stats = compute_stats(train_df)
+    torch.save(stats, PROC_DIR / "stats.pt")
+    print("Saved normalization stats (from train split only)")
 
     for split_name, split_df in [("train", train_df), ("val", val_df)]:
-        gfs, spatial, obs = build_tensors(split_df, stats)
-        torch.save({"gfs": gfs, "spatial": spatial, "obs": obs},
+        gfs, spatial, temporal, obs = build_tensors(split_df, stats)
+        torch.save({"gfs": gfs, "spatial": spatial, "temporal": temporal, "obs": obs},
                    PROC_DIR / f"{split_name}.pt")
         print(f"Saved {split_name}.pt  — {len(split_df)} samples")
 
     # Print bias summary (what the model needs to learn)
     print("\nMean GFS bias per variable (GFS − METAR):")
     for gfs_col, obs_col in zip(GFS_FEATURES, OBS_FEATURES):
-        bias = (df[gfs_col] - df[obs_col]).mean()
-        std  = (df[gfs_col] - df[obs_col]).std()
+        bias = (train_df[gfs_col] - train_df[obs_col]).mean()
+        std  = (train_df[gfs_col] - train_df[obs_col]).std()
         print(f"  {gfs_col:20s}: bias={bias:+.3f}  std={std:.3f}")
 
 

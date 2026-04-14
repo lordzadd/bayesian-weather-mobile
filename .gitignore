@@ -14,6 +14,8 @@ build/
 *.pkl
 data/raw/
 data/processed/
+ml/data/raw/
+ml/data/processed/
 
 # Flutter / Dart
 .dart_tool/
