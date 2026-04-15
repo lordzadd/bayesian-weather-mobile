@@ -143,6 +143,10 @@ class _ForecastBody extends StatelessWidget {
       children: [
         _PrimaryCard(result: result),
         const SizedBox(height: 12),
+        if (result.horizons != null && result.horizons!.isNotEmpty) ...[
+          _HorizonTimeline(horizons: result.horizons!),
+          const SizedBox(height: 12),
+        ],
         _WindCard(result: result),
         const SizedBox(height: 12),
         _DetailGrid(result: result),
@@ -344,6 +348,96 @@ class _UncertaintyBar extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Text('σ=${std.toStringAsFixed(2)}', style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ),
+    );
+  }
+}
+
+class _HorizonTimeline extends StatelessWidget {
+  final List<HorizonSlot> horizons;
+  const _HorizonTimeline({required this.horizons});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(left: 8, bottom: 8),
+              child: Text(
+                '24-Hour Outlook',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+            ),
+            SizedBox(
+              height: 110,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                itemCount: horizons.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (context, i) => _HorizonCard(slot: horizons[i]),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HorizonCard extends StatelessWidget {
+  final HorizonSlot slot;
+  const _HorizonCard({required this.slot});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: 80,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            '+${slot.hours}h',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.primary,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          Column(
+            children: [
+              Text(
+                '${slot.temperatureC.toStringAsFixed(1)}°',
+                style: theme.textTheme.titleMedium,
+              ),
+              Text(
+                '±${slot.temperatureStd.toStringAsFixed(1)}°',
+                style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
+              ),
+            ],
+          ),
+          Column(
+            children: [
+              Text(
+                '${slot.windSpeedMs.toStringAsFixed(1)} m/s',
+                style: theme.textTheme.bodySmall,
+              ),
+              Text(
+                '${slot.precipitationMm.toStringAsFixed(1)} mm',
+                style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
+              ),
+            ],
+          ),
         ],
       ),
     );

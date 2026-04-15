@@ -3,6 +3,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../forecast/forecast_provider.dart';
+import '../locations/saved_locations_provider.dart';
+import '../settings/settings_provider.dart';
 import 'validation_provider.dart';
 
 class ValidationScreen extends ConsumerWidget {
@@ -13,7 +16,7 @@ class ValidationScreen extends ConsumerWidget {
     final state = ref.watch(validationProvider);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Lookback Validation'),
+        title: const Text('24-Hour Backcast Validation'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -21,13 +24,18 @@ class ValidationScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: state.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Error: $e')),
-        data: (vs) => ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            _RunButton(vs: vs),
+      body: Column(
+        children: [
+          _ValidationLocationBar(),
+          _ModelPickerBar(),
+          Expanded(
+            child: state.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => Center(child: Text('Error: $e')),
+              data: (vs) => ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  _RunButton(vs: vs),
             if (vs.status == ValidationStatus.error && vs.errorMessage != null)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -47,6 +55,125 @@ class ValidationScreen extends ConsumerWidget {
             _SummaryTable(summary: vs.summary),
           ],
         ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Location chip bar — same saved locations as the forecast screen.
+/// Lets the user pick which location to run backcast validation against.
+class _ValidationLocationBar extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final saved    = ref.watch(savedLocationsProvider);
+    final selected = ref.watch(selectedLocationProvider);
+    final locations = saved.valueOrNull ?? [];
+
+    return Container(
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            height: 40,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              children: [
+                ActionChip(
+                  label: const Text('GPS'),
+                  avatar: Icon(
+                    Icons.my_location,
+                    size: 14,
+                    color: selected == null
+                        ? Theme.of(context).colorScheme.onPrimary
+                        : null,
+                  ),
+                  backgroundColor: selected == null
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
+                  labelStyle: selected == null
+                      ? TextStyle(color: Theme.of(context).colorScheme.onPrimary)
+                      : null,
+                  onPressed: () {
+                    ref.read(selectedLocationProvider.notifier).state = null;
+                  },
+                ),
+                ...locations.map((loc) {
+                  final isSelected = selected?.id == loc.id;
+                  return Padding(
+                    padding: const EdgeInsets.only(left: 6),
+                    child: ActionChip(
+                      label: Text(loc.name),
+                      backgroundColor: isSelected
+                          ? Theme.of(context).colorScheme.primary
+                          : null,
+                      labelStyle: isSelected
+                          ? TextStyle(
+                              color: Theme.of(context).colorScheme.onPrimary)
+                          : null,
+                      onPressed: () {
+                        ref.read(selectedLocationProvider.notifier).state = loc;
+                      },
+                    ),
+                  );
+                }),
+                if (locations.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8),
+                    child: Center(
+                      child: Text(
+                        'Add locations in Settings to backcast other cities',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Colors.grey,
+                            ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Model selector — Fusion (friend's) vs LSTM.
+class _ModelPickerBar extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final selected = ref.watch(validationModelProvider);
+
+    Widget chip(String label, ModelVariant variant) {
+      final isSelected = selected == variant;
+      return Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: ChoiceChip(
+          label: Text(label),
+          selected: isSelected,
+          onSelected: (_) =>
+              ref.read(validationModelProvider.notifier).state = variant,
+        ),
+      );
+    }
+
+    return Container(
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Row(
+        children: [
+          Text('Model: ',
+              style: Theme.of(context)
+                  .textTheme
+                  .labelMedium
+                  ?.copyWith(color: Colors.grey)),
+          chip('Fusion', ModelVariant.fusion),
+          chip('LSTM', ModelVariant.lstm),
+        ],
       ),
     );
   }
@@ -59,6 +186,8 @@ class _RunButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final running = vs.status == ValidationStatus.running;
+    final model = ref.watch(validationModelProvider);
+    final label = model == ModelVariant.fusion ? 'Fusion' : 'LSTM';
     return FilledButton.icon(
       onPressed: running
           ? null
@@ -70,7 +199,7 @@ class _RunButton extends ConsumerWidget {
               child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
             )
           : const Icon(Icons.science_outlined),
-      label: Text(running ? 'Running…' : 'Run 1-Hour Lookback'),
+      label: Text(running ? 'Running…' : 'Run $label Lookback'),
     );
   }
 }
@@ -88,9 +217,10 @@ class _ExplainerCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
             Text(
-              'Fetches the GFS forecast from T-0 and the ERA5 observation '
-              'from T-1hr, runs the model as if it were an hour ago, then '
-              'compares the prediction against today\'s actual ERA5 values.\n\n'
+              'Fetches the GFS forecast from T-0 and the last 12 hours of '
+              'ERA5 observations (ending at T-1hr), runs the model as if it '
+              'were an hour ago, then compares the +1h prediction against '
+              'today\'s actual ERA5 values.\n\n'
               'AE = absolute error  ·  Coverage = truth within predicted ±2σ',
               style: Theme.of(context)
                   .textTheme
@@ -163,20 +293,26 @@ class _SummaryTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (summary.isEmpty) {
+    // Only compare Fusion and LSTM
+    final rows = summary
+        .where((r) =>
+            r['model_variant'] == 'fusion' || r['model_variant'] == 'lstm')
+        .toList();
+
+    if (rows.isEmpty) {
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(32),
           child: Text(
-            'No validation runs yet.\nTap "Run 1-Hour Lookback" to start.',
+            'No runs yet.\nSelect Fusion or LSTM above and tap Run.',
             textAlign: TextAlign.center,
           ),
         ),
       );
     }
 
-    // Compute best (lowest) MAE per metric across all models
-    double best(String key) => summary
+    // Compute best (lowest) MAE per metric across fusion + lstm only
+    double best(String key) => rows
         .map((r) => (r[key] as num).toDouble())
         .reduce(math.min);
 
@@ -186,7 +322,7 @@ class _SummaryTable extends StatelessWidget {
     final bestHumidity = best('avg_humidity_ae');
 
     // Best overall: model with lowest temp MAE (primary metric)
-    final bestOverall = summary
+    final bestOverall = rows
         .reduce((a, b) =>
             (a['avg_temp_ae'] as num) <= (b['avg_temp_ae'] as num) ? a : b)['model_variant'] as String;
 
@@ -198,7 +334,7 @@ class _SummaryTable extends StatelessWidget {
           children: [
             Row(
               children: [
-                Text('Model Accuracy Comparison',
+                Text('Fusion vs LSTM',
                     style: Theme.of(context).textTheme.titleSmall),
                 const Spacer(),
                 Text('last 20 runs',
@@ -215,7 +351,7 @@ class _SummaryTable extends StatelessWidget {
                     .bodySmall
                     ?.copyWith(color: Colors.grey)),
             const SizedBox(height: 12),
-            ...summary.map((row) => _ModelSummaryRow(
+            ...rows.map((row) => _ModelSummaryRow(
                   row: row,
                   bestTemp: bestTemp,
                   bestPressure: bestPressure,

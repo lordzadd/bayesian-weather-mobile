@@ -89,12 +89,13 @@ class OpenMeteoService {
   /// Fetches a lookback pair for accuracy validation.
   ///
   /// Returns:
-  ///   [gfsT0]    — GFS hourly slot at the current hour (what model uses as prior)
-  ///   [obsT1hr]  — ERA5/hourly slot 1 hour ago (observation available at T-1hr)
-  ///   [era5Now]  — current ERA5 analysis (ground truth at T-0)
+  ///   [gfsT0]      — GFS hourly slot at the current hour (model prior)
+  ///   [obsHistory] — 12 hourly ERA5 observation vectors ending at T-1hr
+  ///                  (oldest first, newest last). Used by Fusion/LSTM models.
+  ///   [era5Now]    — current ERA5 analysis (ground truth at T-0)
   ///
-  /// Simulates: "Given observation at T-1hr, predict T-0 → compare against actual T-0."
-  Future<({List<double> gfsT0, List<double> obsT1hr, List<double> era5Now})?> fetchLookbackPair(
+  /// Simulates: "Given 12h of obs history ending at T-1hr, predict T-0."
+  Future<({List<double> gfsT0, List<List<double>> obsHistory, List<double> era5Now})?> fetchLookbackPair(
       double lat, double lon) async {
     try {
       final resp = await _dio.get(_url, queryParameters: {
@@ -105,7 +106,7 @@ class OpenMeteoService {
         'wind_speed_unit': 'ms',
         'timezone': 'UTC',
         'forecast_days': 1,
-        'past_hours': 2,
+        'past_hours': 25,
         'models': 'gfs_seamless',
       });
 
@@ -133,11 +134,14 @@ class OpenMeteoService {
       // T-0 GFS slot: the model's prior for the current hour
       final gfsT0 = _slotVector(hourly, idx);
 
-      // T-1hr observation: what was observed an hour ago
-      final prevIdx = (idx - 1).clamp(0, times.length - 1);
-      final obsT1hr = _slotVector(hourly, prevIdx);
+      // 12-step observation history ending at T-1hr (oldest first, newest last)
+      final histEnd = (idx - 1).clamp(0, times.length - 1);
+      final histStart = (histEnd - 11).clamp(0, times.length - 1);
+      final obsHistory = [
+        for (int i = histStart; i <= histEnd; i++) _slotVector(hourly, i),
+      ];
 
-      return (gfsT0: gfsT0, obsT1hr: obsT1hr, era5Now: era5Now);
+      return (gfsT0: gfsT0, obsHistory: obsHistory, era5Now: era5Now);
     } catch (_) {
       return null;
     }

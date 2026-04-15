@@ -11,7 +11,8 @@ import '../../inference/bma_engine.dart';
 import '../../inference/linear_dart_engine.dart';
 import '../../inference/fusion_dart_engine.dart';
 import '../../inference/lstm_dart_engine.dart';
-import '../settings/settings_provider.dart';
+import '../locations/saved_locations_provider.dart';
+import '../settings/settings_provider.dart'; // ModelVariant
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -27,11 +28,15 @@ class ValidationState {
   /// Aggregated summary rows from the DB, newest runs first.
   final List<Map<String, dynamic>> summary;
 
+  /// Location used for the last (or current) run — shown in the UI.
+  final String? activeLocationName;
+
   const ValidationState({
     this.status = ValidationStatus.idle,
     this.errorMessage,
     this.lastMetrics,
     this.summary = const [],
+    this.activeLocationName,
   });
 
   ValidationState copyWith({
@@ -39,15 +44,22 @@ class ValidationState {
     String? errorMessage,
     Map<String, double>? lastMetrics,
     List<Map<String, dynamic>>? summary,
+    String? activeLocationName,
   }) {
     return ValidationState(
       status: status ?? this.status,
       errorMessage: errorMessage,
       lastMetrics: lastMetrics ?? this.lastMetrics,
       summary: summary ?? this.summary,
+      activeLocationName: activeLocationName ?? this.activeLocationName,
     );
   }
 }
+
+/// Which model to run on the validation screen (Fusion or LSTM only).
+/// Defaults to Fusion (friend's model).
+final validationModelProvider =
+    StateProvider<ModelVariant>((_) => ModelVariant.fusion);
 
 // ── Notifier ──────────────────────────────────────────────────────────────────
 
@@ -65,16 +77,33 @@ class ValidationNotifier extends AsyncNotifier<ValidationState> {
 
   Future<void> runLookback({ModelVariant? overrideVariant}) async {
     state = AsyncData(state.value!.copyWith(status: ValidationStatus.running));
-
     try {
       final location = ref.read(locationServiceProvider);
       final weather  = ref.read(openMeteoServiceProvider);
-      final settings = ref.read(settingsProvider);
-      final modelVariant = overrideVariant ?? settings.modelVariant;
+      final ModelVariant modelVariant =
+          overrideVariant ?? ref.read(validationModelProvider);
 
-      final pos = await location.currentPosition();
-      final (lat, lon) = (pos.lat, pos.lon);
+      // Honour saved-location override (same as forecast screen)
+      final override = ref.read(selectedLocationProvider);
+      final double lat;
+      final double lon;
+      final String locationName;
+      if (override != null) {
+        lat = override.lat;
+        lon = override.lon;
+        locationName = override.name;
+      } else {
+        final pos = await location.currentPosition();
+        lat = pos.lat;
+        lon = pos.lon;
+        locationName = 'GPS (${lat.toStringAsFixed(2)}, ${lon.toStringAsFixed(2)})';
+      }
       final spatial = [lat / 90.0, lon / 180.0];
+
+      state = AsyncData(state.value!.copyWith(
+        status: ValidationStatus.running,
+        activeLocationName: locationName,
+      ));
 
       final pair = await weather.fetchLookbackPair(lat, lon);
       if (pair == null) throw Exception('Failed to fetch lookback data');
@@ -83,28 +112,25 @@ class ValidationNotifier extends AsyncNotifier<ValidationState> {
       switch (modelVariant) {
         case ModelVariant.fusion:
           await FusionDartEngine.instance.load();
-          ObservationBufferService.instance.push(lat, lon, [...pair.obsT1hr, ...spatial]);
-          final fusionSeq = ObservationBufferService.instance.getSequence(lat, lon);
-          final obsHist = fusionSeq.map((step) => step.sublist(0, 6)).toList();
           result = FusionDartEngine.instance.infer(
-            obsHistory: obsHist,
+            obsHistory: pair.obsHistory,
             gfsForecast: pair.gfsT0,
             spatialEmbed: spatial,
           );
         case ModelVariant.linear:
           result = LinearDartEngine.instance.infer(
             gfsForecast: pair.gfsT0,
-            obsFeatures: pair.obsT1hr,
+            obsFeatures: pair.obsHistory.last,
             spatialEmbed: spatial,
           );
         case ModelVariant.lstm:
-          ObservationBufferService.instance.push(lat, lon, [...pair.obsT1hr, ...spatial]);
+          ObservationBufferService.instance.push(lat, lon, [...pair.obsHistory.last, ...spatial]);
           final sequence = ObservationBufferService.instance.getSequence(lat, lon);
           result = LstmDartEngine.instance.infer(sequence: sequence);
         case ModelVariant.bma:
           result = await BmaEngine.instance.infer(
             gfsForecast: pair.gfsT0,
-            obsFeatures: pair.obsT1hr,
+            obsFeatures: pair.obsHistory.last,
             spatialEmbed: spatial,
           );
       }

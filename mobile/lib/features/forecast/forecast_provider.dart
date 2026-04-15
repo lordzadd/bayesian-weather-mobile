@@ -79,10 +79,30 @@ class ForecastNotifier extends AsyncNotifier<ForecastResult> {
         final fusionSeq = ObservationBufferService.instance.getSequence(lat, lon);
         // Extract just the 6 weather vars from each buffered step (drop spatial)
         final obsHist = fusionSeq.map((step) => step.sublist(0, 6)).toList();
-        result = FusionDartEngine.instance.infer(
-          obsHistory: obsHist,
-          gfsForecast: gfsForecast,
-          spatialEmbed: spatial,
+        // Run all 5 horizon slots (+1,+3,+6,+12,+24h)
+        final fusionSlots = [
+          for (int hi = 0; hi < FusionDartEngine.nHorizons; hi++)
+            FusionDartEngine.instance.infer(
+              obsHistory: obsHist,
+              gfsForecast: gfsForecast,
+              spatialEmbed: spatial,
+              horizonIndex: hi,
+            ),
+        ];
+        result = fusionSlots.first.copyWith(
+          horizons: [
+            for (int hi = 0; hi < FusionDartEngine.nHorizons; hi++)
+              HorizonSlot(
+                hours: FusionDartEngine.horizonHours[hi],
+                temperatureC: fusionSlots[hi].temperatureC,
+                temperatureStd: fusionSlots[hi].temperatureStd,
+                windSpeedMs: fusionSlots[hi].windSpeedMs,
+                windSpeedStd: fusionSlots[hi].windSpeedStd,
+                surfacePressureHpa: fusionSlots[hi].surfacePressureHpa,
+                relativeHumidityPct: fusionSlots[hi].relativeHumidityPct,
+                precipitationMm: fusionSlots[hi].precipitationMm,
+              ),
+          ],
         );
 
       case ModelVariant.lstm:
