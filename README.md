@@ -1,5 +1,10 @@
 # Bayesian Weather Mobile
 
+Google slides for final presentation:
+https://docs.google.com/presentation/d/1692lSZghK8dbuAyw8BiruqMwYcnnXMFiryBC4b0GOxM/edit?usp=sharing
+Demo vid:
+https://youtu.be/a9y7j-x6ASU
+
 Real-time hyper-local weather forecasting on mobile devices using Bayesian Model Averaging (BMA) deployed at the edge.
 
 ## Overview
